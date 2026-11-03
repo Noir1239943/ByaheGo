@@ -1,8 +1,14 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
+
+// Xendit only sends people back to https addresses, so when a local certificate exists (see README, "Payments") the dev
+// server uses it. Without one nothing changes: plain http on port 5173.
+const certDir = fileURLToPath(new URL('./.cert', import.meta.url))
+const https = existsSync(`${certDir}/localhost.pem`) ? { key: readFileSync(`${certDir}/localhost-key.pem`), cert: readFileSync(`${certDir}/localhost.pem`) } : undefined
 
 export default defineConfig({
   plugins: [
@@ -53,5 +59,5 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
-  server: { port: 5173 },
+  server: { port: 5173, https },
 })

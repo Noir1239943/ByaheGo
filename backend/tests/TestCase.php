@@ -9,17 +9,65 @@ use App\Models\Vehicle;
 use App\Support\Settings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Http\Client\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\TestResponse;
 
 abstract class TestCase extends BaseTestCase
 {
     use RefreshDatabase;
 
+    /**
+     * A stand-in for Xendit. `session_status` is what every session reports (ACTIVE = not paid yet); change it in a test
+     * to play out an unpaid, expired or paid checkout. `autopay` makes book() finish the payment like the return page does.
+     */
+    protected array $xendit = ['session_status' => 'COMPLETED', 'autopay' => true, 'refund_status' => 'SUCCEEDED', 'fail_refunds' => false, 'fail_sessions' => false, 'n' => 0, 'sessions' => [], 'refunds' => [], 'calls' => []];
+
     protected function setUp(): void
     {
         parent::setUp();
         Settings::flush();
+        config(['services.xendit.secret' => 'xnd_test_secret', 'services.xendit.callback_token' => 'cb-token', 'services.xendit.base_url' => 'https://api.xendit.co']);
+        $this->fakeXendit();
+    }
+
+    protected function fakeXendit(): void
+    {
+        Http::fake([
+            'api.xendit.co/sessions/*/cancel' => fn (Request $r) => Http::response(['status' => 'CANCELED']),
+            'api.xendit.co/sessions/*' => function (Request $r) {
+                $id = basename($r->url());
+                $session = $this->xendit['sessions'][$id] ?? null;
+                if (! $session) return Http::response(['message' => 'not found', 'error_code' => 'DATA_NOT_FOUND'], 404);
+                $status = $this->xendit['session_status'];
+                return Http::response($session + ['status' => $status] + ($status === 'COMPLETED' ? ['payment_id' => 'py-'.$id] : []));
+            },
+            'api.xendit.co/sessions' => function (Request $r) {
+                $this->xendit['calls'][] = $r->data();
+                if ($this->xendit['fail_sessions']) return Http::response(['message' => 'Channel(s) are not available', 'error_code' => 'INVALID_PAYMENT_CHANNEL'], 400);
+                $id = 'ps-test-'.(++$this->xendit['n']);
+                $this->xendit['sessions'][$id] = ['payment_session_id' => $id, 'payment_link_url' => 'https://pay.test/'.$id, 'expires_at' => now()->addMinutes(30)->toIso8601String()] + $r->data();
+                return Http::response($this->xendit['sessions'][$id]);
+            },
+            'api.xendit.co/v3/refunds/*' => function (Request $r) {
+                $id = basename($r->url());
+                return Http::response(($this->xendit['refunds'][$id] ?? []) + ['refund_id' => $id, 'status' => $this->xendit['refund_status']]);
+            },
+            'api.xendit.co/v3/refunds' => function (Request $r) {
+                $this->xendit['calls'][] = $r->data();
+                if ($this->xendit['fail_refunds']) return Http::response(['message' => 'Refund is not allowed', 'error_code' => 'REFUND_NOT_ALLOWED'], 400);
+                $id = 'rfd-test-'.(++$this->xendit['n']);
+                $this->xendit['refunds'][$id] = $r->data() + ['refund_id' => $id];
+                return Http::response($this->xendit['refunds'][$id] + ['status' => $this->xendit['refund_status']]);
+            },
+        ]);
+    }
+
+    /** Plays the renter coming back from Xendit's page after paying. */
+    protected function payBooking(User $renter, string $reference): TestResponse
+    {
+        return $this->as($renter)->postJson("/api/bookings/{$reference}/verify-payment");
     }
 
     protected function makeUser(array $attrs = []): User
@@ -93,7 +141,6 @@ abstract class TestCase extends BaseTestCase
             'driver_phone' => '09171234567',
             'driver_email' => 'vincent@example.test',
             'payment_method' => 'gcash',
-            'wallet_number' => '09171234567',
             'agree_terms' => true,
             'agreement_read_to_end' => true,
             'confirm_age' => true,
@@ -117,7 +164,13 @@ abstract class TestCase extends BaseTestCase
             $payload['signature_name'] = $preview->json('signer_name') ?? 'x';
             $payload['agreement_hash'] = $preview->json('hash') ?? str_repeat('0', 64);
         }
-        return $this->as($renter)->postJson('/api/bookings', $payload);
+        $res = $this->as($renter)->postJson('/api/bookings', $payload);
+        if ($res->getStatusCode() === 201 && $this->xendit['autopay']) {
+            $paid = $this->payBooking($renter, $res->json('reference'))->assertOk();
+            $paid->baseResponse->setStatusCode(201); // so the many tests that expect "created" keep reading naturally
+            return $paid;
+        }
+        return $res;
     }
 
     protected function fakeImage(string $name = 'photo.jpg', int $w = 1200, int $h = 800): UploadedFile

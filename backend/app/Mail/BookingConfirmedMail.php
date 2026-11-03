@@ -3,8 +3,10 @@
 namespace App\Mail;
 
 use App\Models\Booking;
+use App\Models\Invoice;
 use App\Models\User;
 use App\Services\AgreementService;
+use App\Services\InvoiceService;
 use App\Support\Settings;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Attachment;
@@ -14,7 +16,7 @@ use Illuminate\Mail\Mailables\Envelope;
 /** Sent to the renter and the host when a booking is confirmed, with the signed agreement attached. */
 class BookingConfirmedMail extends Mailable
 {
-    public function __construct(public Booking $booking, public User $recipient, public bool $forHost = false) {}
+    public function __construct(public Booking $booking, public User $recipient, public bool $forHost = false, public ?Invoice $invoice = null) {}
 
     public function envelope(): Envelope
     {
@@ -28,15 +30,20 @@ class BookingConfirmedMail extends Mailable
             'booking' => $this->booking,
             'recipient' => $this->recipient,
             'forHost' => $this->forHost,
+            'invoice' => $this->invoice,
             'freeUntil' => $agreements->when($this->booking->pickup_at->copy()->subHours((int) Settings::get('cancellation_cutoff_hours'))),
         ]);
     }
 
     public function attachments(): array
     {
-        if (! $this->booking->agreement()->exists()) return [];
-        return [
-            Attachment::fromData(fn () => app(AgreementService::class)->pdf($this->booking), "ByaheGo-agreement-{$this->booking->reference}.pdf")->withMime('application/pdf'),
-        ];
+        $files = [];
+        if ($this->booking->agreement()->exists()) {
+            $files[] = Attachment::fromData(fn () => app(AgreementService::class)->pdf($this->booking), "ByaheGo-agreement-{$this->booking->reference}.pdf")->withMime('application/pdf');
+        }
+        if ($this->invoice) {
+            $files[] = Attachment::fromData(fn () => app(InvoiceService::class)->pdf($this->invoice), "ByaheGo-{$this->invoice->number}.pdf")->withMime('application/pdf');
+        }
+        return $files;
     }
 }

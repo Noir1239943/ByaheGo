@@ -18,11 +18,12 @@ export const FEATURE_OPTIONS = [
 ]
 
 export const PAYMENT_METHODS: { value: PaymentMethod; label: string; hint: string; badge?: string }[] = [
-  { value: 'gcash', label: 'GCash', hint: 'Pay instantly from your GCash wallet', badge: 'Most popular' },
-  { value: 'maya', label: 'Maya', hint: 'Pay with your Maya account' },
-  { value: 'card', label: 'Credit or debit card', hint: 'Visa, Mastercard and JCB accepted' },
-  { value: 'google_pay', label: 'Google Pay', hint: 'Fast checkout with your saved Google card' },
-  { value: 'apple_pay', label: 'Apple Pay', hint: 'Pay with Face ID or Touch ID' },
+  { value: 'gcash', label: 'GCash', hint: 'Approve the payment in your GCash app', badge: 'Most popular' },
+  { value: 'maya', label: 'Maya', hint: 'Approve the payment in your Maya app' },
+  { value: 'card', label: 'Credit or debit card', hint: 'Visa, Mastercard and JCB, typed on a secure page' },
+  { value: 'qrph', label: 'QR Ph', hint: 'Scan with any bank or e-wallet app' },
+  { value: 'grabpay', label: 'GrabPay', hint: 'Pay with your GrabPay wallet' },
+  { value: 'shopeepay', label: 'ShopeePay', hint: 'Pay with your ShopeePay wallet' },
 ]
 
 export const INSPECTION_ITEMS: { key: string; label: string }[] = [
@@ -65,4 +66,5 @@ export const PAYMENT_TYPE_LABEL: Record<string, string> = {
   refund: 'Refund',
   late_fee: 'Late return fee',
   damage: 'Damage charge',
+  cancellation_fee: 'Cancellation fee',
 }

@@ -10,14 +10,14 @@ import { ErrorState, PageLoader } from '@/components/common/States'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { tripStatus } from '@/lib/status'
 import { VehicleImage } from '@/components/common/VehicleImage'
-import { PaymentFields, PaymentMethodPicker } from '@/components/features/checkout/CheckoutSection'
+import { PaymentMethodPicker } from '@/components/features/checkout/CheckoutSection'
 import { DepositCard } from '@/components/features/bookings/DepositCard'
 import { IncidentsList } from '@/components/features/bookings/IncidentsList'
 import { InspectionsList } from '@/components/features/bookings/InspectionsList'
 import { PaymentsList } from '@/components/features/bookings/PaymentsList'
 import { TripTimeline } from '@/components/features/bookings/TripTimeline'
 import { Alert, Button, Card, CardBody, CardHeader, Modal, Select, Textarea } from '@/components/ui'
-import { getErrorMessage, getFieldErrors } from '@/lib/api'
+import { getErrorMessage } from '@/lib/api'
 import { parseAgreementText } from '@/lib/agreement'
 import { downloadIcs } from '@/lib/calendar'
 import { downloadFile } from '@/lib/download'
@@ -36,8 +36,6 @@ export function TripDetailSection() {
   const [rating, setRating] = useState(5)
   const [comment, setComment] = useState('')
   const [method, setMethod] = useState<PaymentMethod>('gcash')
-  const [pay, setPay] = useState<Record<string, string>>({})
-  const [payErrors, setPayErrors] = useState<Record<string, string>>({})
   const [report, setReport] = useState({ type: 'breakdown', description: '' })
 
   useEffect(() => {
@@ -53,12 +51,19 @@ export function TripDetailSection() {
     void qc.invalidateQueries({ queryKey: ['booking', reference] })
     void qc.invalidateQueries({ queryKey: ['trips'] })
   }
-  const cancel = useMutation({ mutationFn: () => bookingService.cancel(reference, reason), onSuccess: () => done('Trip cancelled. Your full refund is on its way.'), onError: (e) => toast.error(getErrorMessage(e)) })
+  const cancel = useMutation({ mutationFn: () => bookingService.cancel(reference, reason), onSuccess: (r) => done(r.payment_status === 'unpaid' ? 'Booking cancelled. Nothing was charged.' : 'Trip cancelled. Your full refund is on its way.'), onError: (e) => toast.error(getErrorMessage(e)) })
   const review = useMutation({ mutationFn: () => bookingService.review(reference, { rating, comment }), onSuccess: () => done('Thanks for your review!'), onError: (e) => toast.error(getErrorMessage(e)) })
+  // The balance, like the trip itself, is paid on Xendit's page. The booking page picks the result up when the renter comes back.
   const payBalance = useMutation({
-    mutationFn: () => bookingService.payBalance(reference, { payment_method: method, ...pay }),
-    onSuccess: () => done('Payment received. You\'re all settled!'),
-    onError: (e) => { setPayErrors(getFieldErrors(e)); toast.error(getErrorMessage(e)) },
+    mutationFn: () => bookingService.payBalance(reference, method),
+    onSuccess: (r) => window.location.assign(r.checkout_url),
+    onError: (e) => toast.error(getErrorMessage(e)),
+  })
+  // Finish paying an unpaid booking: back to the payment page (or a fresh one if it ran out).
+  const resume = useMutation({
+    mutationFn: () => bookingService.pay(reference),
+    onSuccess: (r) => (r.checkout_url ? window.location.assign(r.checkout_url) : done(r.booking.status === 'cancelled' ? 'This booking expired because it wasn\'t paid in time.' : 'Your payment was received.')),
+    onError: (e) => toast.error(getErrorMessage(e)),
   })
   const reportIt = useMutation({ mutationFn: () => bookingService.reportIncident(reference, report), onSuccess: () => done('Report sent. Our team will contact you shortly.'), onError: (e) => toast.error(getErrorMessage(e)) })
 
@@ -91,6 +96,11 @@ export function TripDetailSection() {
         <div className="border-t border-line-100 bg-page/50 p-5 sm:p-6"><TripTimeline b={b} /></div>
       </Card>
 
+      {b.status === 'pending' && (
+        <Alert tone="warning" title="Finish paying to confirm this booking" action={<div className="flex gap-2"><Button size="sm" loading={resume.isPending} onClick={() => resume.mutate()}>Complete payment</Button><Button size="sm" variant="ghost" onClick={() => setModal('cancel')}>Cancel</Button></div>}>
+          We're holding the dates for you{b.pay_by ? ` until ${formatDateTime(b.pay_by)}` : ''}. Nothing is charged until you pay, and the host is only told once the payment goes through.
+        </Alert>
+      )}
       {s === 'overdue' && <Alert tone="danger" title="Your return is overdue">Please return the vehicle as soon as possible. Hourly late fees apply after the 60-minute grace period. Call support if you need help.</Alert>}
       {b.balance_due > 0 && (
         <Alert tone="danger" title={`${peso(b.balance_due)} balance due`} action={<Button size="sm" onClick={() => setModal('pay')}>Pay now</Button>}>
@@ -130,7 +140,7 @@ export function TripDetailSection() {
           )}
 
           <Card>
-            <CardHeader title="Payments & refunds" description="Every charge and refund for this trip, with official receipt numbers." action={<Button size="sm" variant="ghost" to={`/invoice/${b.reference}`}>View receipt</Button>} />
+            <CardHeader title="Payments & refunds" description="Every charge and refund for this trip, with invoice numbers you can download." action={<Button size="sm" variant="ghost" to={`/invoice/${b.reference}`}>View receipt</Button>} />
             <CardBody className="py-2"><PaymentsList payments={b.payments} /></CardBody>
           </Card>
         </div>
@@ -170,15 +180,15 @@ export function TripDetailSection() {
       <Modal
         open={modal === 'cancel'}
         onClose={() => setModal(null)}
-        title="Cancel this trip?"
-        description={b.cancellation_fee_if_cancelled > 0 ? `A cancellation fee of ${peso(b.cancellation_fee_if_cancelled)} is kept from your refund.` : "You're cancelling more than a day before pick-up, so it's free."}
+        title={b.status === 'pending' ? 'Cancel this booking?' : 'Cancel this trip?'}
+        description={b.status === 'pending' ? "You haven't paid yet, so nothing is charged and there is nothing to refund." : b.cancellation_fee_if_cancelled > 0 ? `A cancellation fee of ${peso(b.cancellation_fee_if_cancelled)} is kept from your refund.` : "You're cancelling more than a day before pick-up, so it's free."}
         size="sm"
-        footer={<><Button variant="secondary" onClick={() => setModal(null)}>Keep my trip</Button><Button variant="danger" loading={cancel.isPending} onClick={() => cancel.mutate()}>Cancel and refund</Button></>}
+        footer={<><Button variant="secondary" onClick={() => setModal(null)}>Keep my trip</Button><Button variant="danger" loading={cancel.isPending} onClick={() => cancel.mutate()}>{b.status === 'pending' ? 'Cancel booking' : 'Cancel and refund'}</Button></>}
       >
-        <div className="rounded-2xl bg-success-soft p-4 text-sm">
+        {b.status !== 'pending' && <div className="rounded-2xl bg-success-soft p-4 text-sm">
           <p className="font-semibold">You'll get back {peso(b.amount_paid - b.cancellation_fee_if_cancelled)}</p>
           <p className="mt-0.5 text-ink-700">Trip total {peso(b.total)} + deposit {peso(b.security_deposit)}{b.cancellation_fee_if_cancelled > 0 ? ` − cancellation fee ${peso(b.cancellation_fee_if_cancelled)}` : ''}, refunded to {b.payment_method_label}. It usually arrives within 3–5 banking days.</p>
-        </div>
+        </div>}
         <Textarea label="Reason (optional)" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. My plans changed" wrapperClassName="mt-4" />
       </Modal>
 
@@ -194,9 +204,8 @@ export function TripDetailSection() {
         <Textarea label="Tell others about it" rows={4} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Was the car clean? Was pick-up easy?" wrapperClassName="mt-4" />
       </Modal>
 
-      <Modal open={modal === 'pay'} onClose={() => setModal(null)} title={`Pay ${peso(b.balance_due)} balance`} footer={<Button loading={payBalance.isPending} onClick={() => payBalance.mutate()}>Pay {peso(b.balance_due)}</Button>}>
+      <Modal open={modal === 'pay'} onClose={() => setModal(null)} title={`Pay ${peso(b.balance_due)} balance`} description="You'll finish on Xendit's secure payment page." footer={<Button loading={payBalance.isPending} onClick={() => payBalance.mutate()}>Continue to payment</Button>}>
         <PaymentMethodPicker value={method} onChange={setMethod} />
-        <div className="mt-4"><PaymentFields method={method} values={pay} setValue={(k, val) => setPay({ ...pay, [k]: val })} errors={payErrors} /></div>
       </Modal>
 
       <Modal open={modal === 'report'} onClose={() => setModal(null)} title="Report a problem" description="For emergencies, call our 24/7 line: (032) 888 2924." footer={<Button loading={reportIt.isPending} disabled={report.description.trim().length < 10} onClick={() => reportIt.mutate()}>Send report</Button>}>

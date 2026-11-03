@@ -84,6 +84,7 @@ export const router = createBrowserRouter([
             element: <CheckoutLayout />,
             children: [
               { path: 'checkout/:vehicleId', lazy: page(() => import('@/pages/checkout/CheckoutPage')), handle: { title: 'Confirm and pay', step: 1 } },
+              { path: 'checkout/return/:reference', lazy: page(() => import('@/pages/checkout/CheckoutReturnPage')), handle: { title: 'Confirming your payment', step: 2 } },
               { path: 'booking/:reference/confirmed', lazy: page(() => import('@/pages/checkout/BookingConfirmedPage')), handle: { title: 'You\'re all set', step: 3 } },
             ],
           },
@@ -93,7 +94,7 @@ export const router = createBrowserRouter([
           },
           {
             element: <PrintLayout />,
-            children: [{ path: 'invoice/:reference', lazy: page(() => import('@/pages/account/InvoicePage')), handle: { title: 'Invoice & official receipt' } }],
+            children: [{ path: 'invoice/:reference', lazy: page(() => import('@/pages/account/InvoicePage')), handle: { title: 'Booking summary' } }],
           },
         ],
       },

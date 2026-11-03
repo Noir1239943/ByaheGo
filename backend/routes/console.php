@@ -23,5 +23,11 @@ Artisan::command('deposits:release-due', function (\App\Services\BookingService 
     $this->info('Settled '.$bookings->releaseDueDeposits().' deposit(s).');
 })->purpose('Settle deposits of completed trips once the release window has passed');
 
+// Checks payments and refunds that are still pending with Xendit. Webhooks normally do this instantly; this is the safety net.
+Artisan::command('payments:sync', function (\App\Services\PaymentService $payments) {
+    $this->info('Checked '.$payments->syncPending().' pending payment(s) and refund(s).');
+})->purpose('Ask Xendit about payments and refunds that are still pending');
+
+\Illuminate\Support\Facades\Schedule::command('payments:sync')->everyFiveMinutes();
 \Illuminate\Support\Facades\Schedule::command('bookings:expire-pending')->everyMinute();
 \Illuminate\Support\Facades\Schedule::command('deposits:release-due')->hourly();

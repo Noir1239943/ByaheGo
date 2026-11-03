@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\AdminOverviewController;
 use App\Http\Controllers\Api\Admin\AdminUserController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BookingController;
+use App\Http\Controllers\Api\XenditWebhookController;
 use App\Http\Controllers\Api\Host\HostBookingController;
 use App\Http\Controllers\Api\Host\HostDashboardController;
 use App\Http\Controllers\Api\Host\HostVehicleController;
@@ -76,6 +77,9 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::post('vehicles/{id}/agreement', [BookingController::class, 'agreementPreview'])->whereNumber('id');
     Route::post('bookings/{reference}/cancel', [BookingController::class, 'cancel']);
     Route::get('bookings/{reference}/agreement.pdf', [BookingController::class, 'agreementPdf']);
+    Route::post('bookings/{reference}/verify-payment', [BookingController::class, 'verifyPayment'])->middleware('throttle:60,1');
+    Route::post('bookings/{reference}/pay', [BookingController::class, 'pay'])->middleware('throttle:20,1');
+    Route::get('payments/{id}/invoice.pdf', [BookingController::class, 'invoicePdf'])->whereNumber('id');
     Route::post('bookings/{reference}/pay-balance', [BookingController::class, 'payBalance']);
     Route::post('bookings/{reference}/review', [BookingController::class, 'review']);
     Route::post('bookings/{reference}/incidents', [BookingController::class, 'reportIncident']);
@@ -135,6 +139,10 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::post('bookings/{reference}/note', [AdminBookingController::class, 'note']);
         Route::post('bookings/{reference}/message', [AdminBookingController::class, 'message']);
         Route::get('payments', [AdminBookingController::class, 'payments']);
+        Route::get('payments/{id}/invoice.pdf', [AdminBookingController::class, 'invoicePdf'])->whereNumber('id');
+        Route::post('payments/{id}/sync', [AdminBookingController::class, 'syncPayment'])->whereNumber('id');
+        Route::post('payments/{id}/retry-refund', [AdminBookingController::class, 'retryRefund'])->whereNumber('id');
+        Route::post('payments/{id}/mark-refund-handled', [AdminBookingController::class, 'markRefundHandled'])->whereNumber('id');
         Route::get('payouts', [AdminBookingController::class, 'payouts']);
         Route::post('payouts/{id}/mark-paid', [AdminBookingController::class, 'markPayoutPaid'])->whereNumber('id');
         Route::get('disputes', [AdminBookingController::class, 'incidents']);
@@ -145,3 +153,6 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::put('settings', [AdminMiscController::class, 'updateSettings']);
     });
 });
+
+// Xendit calls this when a payment page is paid or a refund finishes. It checks its own callback token, not a user login.
+Route::post('webhooks/xendit', [XenditWebhookController::class, 'handle'])->middleware('throttle:120,1');

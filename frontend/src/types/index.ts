@@ -1,7 +1,7 @@
 export type Role = 'renter' | 'host' | 'admin'
 export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'rejected'
 export type VehicleType = 'sedan' | 'hatchback' | 'suv' | 'mpv' | 'van' | 'pickup' | 'motorcycle'
-export type PaymentMethod = 'gcash' | 'maya' | 'card' | 'google_pay' | 'apple_pay'
+export type PaymentMethod = 'gcash' | 'maya' | 'card' | 'qrph' | 'grabpay' | 'shopeepay'
 export type RentalType = 'self' | 'driver'
 export type ProtectionKey = 'standard' | 'plus' | 'premium'
 
@@ -184,19 +184,33 @@ export interface Payment {
   method: PaymentMethod | 'deposit'
   method_label: string
   amount: number
+  /** pending | succeeded | failed | expired */
   status: string
   receipt_no: string
   gateway_ref: string | null
   account_hint: string | null
   description: string
+  reason: string | null
+  failure_reason: string | null
+  paid_at: string | null
+  /** The real invoice (or refund receipt) number, once one has been issued. */
+  invoice_no: string | null
+  invoice_kind: 'invoice' | 'refund_receipt' | null
+  /** Admin only. */
+  provider?: string | null
+  provider_payment_id?: string | null
+  provider_refund_id?: string | null
+  provider_session_id?: string | null
+  attempts?: number
+  requested_by?: string | null
   created_at: string
   booking_reference: string | null
   vehicle_name: string | null
   user: UserBrief | null
 }
 
-export type BookingStatus = 'confirmed' | 'active' | 'completed' | 'cancelled'
-export type DisplayStatus = 'upcoming' | 'active' | 'completed' | 'cancelled' | 'under_review'
+export type BookingStatus = 'pending' | 'confirmed' | 'active' | 'completed' | 'cancelled'
+export type DisplayStatus = 'pending' | 'upcoming' | 'active' | 'completed' | 'cancelled' | 'under_review'
 
 export interface BookingRow {
   id: number
@@ -276,6 +290,9 @@ export interface Booking extends Omit<BookingRow, 'vehicle' | 'has_open_incident
   review: Review | null
   vehicle: VehicleCard
   payments: Payment[]
+  /** Xendit's payment page for an unpaid booking (renter only). */
+  checkout_url: string | null
+  pay_by: string | null
   inspections: Inspection[]
   incidents: BookingIncident[]
   invoice_no: string

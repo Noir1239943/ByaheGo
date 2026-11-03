@@ -11,7 +11,7 @@ import { VehicleImage } from '@/components/common/VehicleImage'
 import { DepositCard } from '@/components/features/bookings/DepositCard'
 import { IncidentsList } from '@/components/features/bookings/IncidentsList'
 import { InspectionsList } from '@/components/features/bookings/InspectionsList'
-import { PaymentsList } from '@/components/features/bookings/PaymentsList'
+import { adminInvoicePath, PaymentsList } from '@/components/features/bookings/PaymentsList'
 import { TripTimeline } from '@/components/features/bookings/TripTimeline'
 import { Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, Checkbox, Input, Modal, Select, Textarea } from '@/components/ui'
 import { getErrorMessage } from '@/lib/api'
@@ -99,7 +99,7 @@ export function AdminBookingDetailSection() {
           </div>
           {b.incidents.length > 0 && <Card><CardHeader title="Incidents" action={<Button size="sm" variant="ghost" to="/admin/disputes">Open disputes</Button>} /><CardBody><IncidentsList incidents={b.incidents} /></CardBody></Card>}
           <Card><CardHeader title="Condition records" /><CardBody><InspectionsList inspections={b.inspections} /></CardBody></Card>
-          <Card><CardHeader title="Payments & refunds" /><CardBody className="py-2"><PaymentsList payments={b.payments} /></CardBody></Card>
+          <Card><CardHeader title="Payments & refunds" /><CardBody className="py-2"><PaymentsList payments={b.payments} invoicePath={adminInvoicePath} /></CardBody></Card>
           <Card>
             <CardHeader title="Activity log" />
             <CardBody>

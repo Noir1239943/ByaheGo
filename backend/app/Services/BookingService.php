@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Mail\BookingConfirmedMail;
 use App\Models\Booking;
 use App\Models\Incident;
 use App\Models\Payment;
@@ -14,22 +13,17 @@ use App\Support\Notifier;
 use App\Support\Settings;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\ValidationException;
 
 class BookingService
 {
     public const AGREEMENT_VERSION = AgreementService::VERSION;
 
-    public function __construct(protected PricingService $pricing, protected PaymentGateway $gateway, protected AgreementService $agreements) {}
+    public function __construct(protected PricingService $pricing, protected PaymentService $payments, protected AgreementService $agreements) {}
 
     public static function receiptNo(string $prefix = 'OR'): string
     {
-        do {
-            $no = $prefix.'-'.now()->format('Y').'-'.random_int(100000, 999999);
-        } while (Payment::where('receipt_no', $no)->exists());
-        return $no;
+        return PaymentService::receiptNo($prefix);
     }
 
     public static function nextReference(): string
@@ -79,8 +73,6 @@ class BookingService
                 throw ValidationException::withMessages(['agreement' => 'The agreement changed since you opened it (for example the price or dates). Please read it again and sign.']);
             }
 
-            $charge = $this->gateway->charge($data['payment_method'], $quote['due_now'], $data);
-
             $booking = Booking::create([
                 'reference' => self::nextReference(),
                 'renter_id' => $renter->id,
@@ -98,10 +90,12 @@ class BookingService
                 'service_fee' => $quote['service_fee'],
                 'total' => $quote['total'],
                 'security_deposit' => $quote['security_deposit'],
-                'amount_paid' => $quote['due_now'],
-                'status' => 'confirmed',
-                'payment_status' => 'paid',
-                'deposit_status' => 'held',
+                'amount_paid' => 0,
+                // Nothing is confirmed until Xendit says the payment went through (see PaymentService::confirm). Until then the dates are held.
+                'status' => 'pending',
+                'payment_status' => 'unpaid',
+                'deposit_status' => 'pending',
+                'expires_at' => now()->addMinutes((int) Settings::get('pending_booking_minutes')),
                 // The booking keeps the exact pick-up spot; it is only shown to the renter and host (see Present::booking).
                 'pickup_label' => $vehicle->pickupLabel(true),
                 'pickup_lat' => $vehicle->lat,
@@ -117,43 +111,21 @@ class BookingService
             ]);
             $this->agreements->sign($booking, $agreement, trim((string) $data['signature_name']), $ip, $userAgent, (bool) ($data['agreement_read_to_end'] ?? false));
 
-            $booking->payments()->create([
-                'user_id' => $renter->id,
-                'type' => 'charge',
-                'method' => $data['payment_method'],
-                'amount' => $quote['due_now'],
-                'status' => $charge['status'],
-                'receipt_no' => self::receiptNo(),
-                'gateway_ref' => $charge['gateway_ref'],
-                'account_hint' => $charge['account_hint'],
-                'description' => "Trip {$booking->reference} – {$vehicle->name} (includes ".Money::peso($quote['security_deposit']).' refundable deposit)',
-            ]);
-
-            $booking->log('created', 'Booking created. Rental agreement v'.$agreement['version'].' e-signed by '.trim((string) $data['signature_name']).'.', $renter->id);
-            $booking->log('payment', 'Payment of '.Money::peso($quote['due_now']).' received via '.PaymentGateway::METHODS[$data['payment_method']].'.', $renter->id);
-            $booking->log('deposit', 'Security deposit of '.Money::peso($quote['security_deposit']).' placed on hold.');
-
-            Notifier::send($renter, 'Your trip is booked!', "{$vehicle->name} · pick-up {$booking->pickup_at->format('M j, g:i A')}. Reference {$booking->reference}.", "/account/trips/{$booking->reference}", 'success');
-            Notifier::send($vehicle->host_id, 'New booking', "{$renter->name} booked your {$vehicle->name} for {$booking->days} day(s).", "/host/bookings/{$booking->reference}", 'success');
+            $booking->log('created', 'Booking started. Rental agreement v'.$agreement['version'].' e-signed by '.trim((string) $data['signature_name']).'. Waiting for payment.', $renter->id);
 
             return $booking;
         });
 
-        $this->sendConfirmationEmails($booking);
-        return $booking;
-    }
-
-    /** A failing mail server must never undo a paid booking, so errors are only logged. */
-    protected function sendConfirmationEmails(Booking $booking): void
-    {
-        $booking->loadMissing(['renter', 'host', 'vehicle', 'agreement']);
-        foreach ([[$booking->renter, false], [$booking->host, true]] as [$to, $forHost]) {
-            try {
-                if ($to?->email) Mail::to($to->email)->send(new BookingConfirmedMail($booking, $to, $forHost));
-            } catch (\Throwable $e) {
-                Log::warning("Could not email {$booking->reference} confirmation to user {$to?->id}: ".$e->getMessage());
-            }
+        // The payment page is opened outside the transaction (it is a call to another company). If it can't be opened the
+        // booking is dropped so the dates don't stay held for nothing.
+        try {
+            $this->payments->startCheckout($booking->load('vehicle'), $data['payment_method']);
+        } catch (PaymentGatewayException $e) {
+            $booking->update(['status' => 'cancelled', 'cancelled_at' => now(), 'cancelled_by' => 'system', 'cancel_reason' => 'The payment page could not be opened.', 'expires_at' => null]);
+            $booking->log('cancelled', 'Payment could not be started, so the booking was dropped.');
+            throw ValidationException::withMessages(['payment' => 'We couldn\'t open the payment page just now. Nothing was charged. Please try again in a moment.']);
         }
+        return $booking->fresh();
     }
 
     public function freeCancellationUntil(Booking $booking): Carbon
@@ -194,6 +166,7 @@ class BookingService
 
     public function cancel(Booking $booking, string $by, ?string $reason, ?User $actor = null, bool $refund = true): Booking
     {
+        if ($booking->status === 'pending') return $this->dropUnpaid($booking, $by, $reason, $actor);
         if (! in_array($booking->status, ['confirmed', 'active'], true)) {
             throw ValidationException::withMessages(['booking' => 'This booking can no longer be cancelled.']);
         }
@@ -229,7 +202,7 @@ class BookingService
                 }
                 $refundable = $this->refundableAmount($booking);
                 if ($refundable > 0) {
-                    $this->issueRefund($booking, $refundable, ($fee > 0 ? 'Refund (minus cancellation fee) for cancelled trip ' : 'Full refund for cancelled trip ').$booking->reference, $actor);
+                    $this->issueRefund($booking, $refundable, ($fee > 0 ? 'Refund (minus cancellation fee) for cancelled trip ' : 'Full refund for cancelled trip ').$booking->reference, $actor, 'CANCELLATION');
                 }
                 $booking->update(['deposit_status' => 'refunded', 'payment_status' => $fee > 0 ? 'partially_refunded' : 'refunded']);
             }
@@ -241,6 +214,20 @@ class BookingService
         });
     }
 
+    /** Giving up before paying: the payment page is closed and the dates are free again. If the money lands anyway it is refunded. */
+    protected function dropUnpaid(Booking $booking, string $by, ?string $reason, ?User $actor): Booking
+    {
+        $booking = $this->payments->verifyBooking($booking); // it may have been paid a second ago
+        if ($booking->status !== 'pending') return $this->cancel($booking, $by, $reason, $actor);
+        foreach ($booking->payments()->where('type', 'charge')->where('status', 'pending')->get() as $p) {
+            if ($p->provider_session_id) app(PaymentGateway::class)->cancelSession($p->provider_session_id);
+            $p->update(['status' => 'failed', 'failure_reason' => 'The booking was cancelled before paying.']);
+        }
+        $booking->update(['status' => 'cancelled', 'cancelled_at' => now(), 'cancelled_by' => $by, 'cancel_reason' => $reason, 'expires_at' => null]);
+        $booking->log('cancelled', 'Unpaid booking cancelled by '.$by.($reason ? ": {$reason}" : '.'), $actor?->id);
+        return $booking->fresh();
+    }
+
     protected function ordinal(int $n): string
     {
         return $n.(in_array($n % 100, [11, 12, 13], true) ? 'th' : [1 => 'st', 2 => 'nd', 3 => 'rd'][$n % 10] ?? 'th');
@@ -248,36 +235,18 @@ class BookingService
 
     public function refundableAmount(Booking $booking): int
     {
-        $paid = (int) $booking->payments()->whereIn('type', ['charge', 'balance'])->sum('amount');
-        $refunded = (int) $booking->payments()->where('type', 'refund')->sum('amount');
-        $applied = (int) $booking->payments()->whereIn('type', ['late_fee', 'damage', 'cancellation_fee'])->sum('amount');
-        return max(0, $paid - $refunded - $applied);
+        return $this->payments->refundable($booking);
     }
 
-    public function issueRefund(Booking $booking, int $amount, string $description, ?User $actor = null): Payment
+    /** @return Payment the first refund row created (a refund is split only if it spans more than one payment) */
+    public function issueRefund(Booking $booking, int $amount, string $description, ?User $actor = null, string $providerReason = 'OTHERS'): Payment
     {
-        $max = $this->refundableAmount($booking);
-        if ($amount <= 0 || $amount > $max) {
-            throw ValidationException::withMessages(['amount' => 'Refund must be between ₱1 and '.Money::peso($max).'.']);
-        }
-        $result = $this->gateway->refund($booking->payment_method, $amount);
-        $payment = $booking->payments()->create([
-            'user_id' => $booking->renter_id,
-            'type' => 'refund',
-            'method' => $booking->payment_method,
-            'amount' => $amount,
-            'status' => $result['status'],
-            'receipt_no' => self::receiptNo('RF'),
-            'gateway_ref' => $result['gateway_ref'],
-            'account_hint' => $booking->payments()->where('type', 'charge')->value('account_hint'),
-            'description' => $description,
-        ]);
-        $booking->log('refund', 'Refund of '.Money::peso($amount).' sent to '.(PaymentGateway::METHODS[$booking->payment_method] ?? 'original method').'.', $actor?->id);
-        if ($booking->status !== 'cancelled') {
+        $rows = $this->payments->refund($booking, $amount, $description, $actor, $providerReason);
+        // A refund Xendit refused is saved as failed (see Payments in the admin) and doesn't change the booking.
+        if ($booking->status !== 'cancelled' && collect($rows)->contains(fn ($r) => $r->status !== 'failed')) {
             $booking->update(['payment_status' => 'partially_refunded']);
         }
-        Notifier::send($booking->renter_id, 'Refund issued', Money::peso($amount)." was refunded for {$booking->reference}. It may take 3–5 banking days to appear.", '/account/billing', 'success');
-        return $payment;
+        return $rows[0];
     }
 
     public function recordPickup(Booking $booking, array $data, User $actor): Booking
@@ -386,18 +355,7 @@ class BookingService
             }
         }
         if ($remainingDeposit > 0) {
-            $result = $this->gateway->refund($booking->payment_method, $remainingDeposit);
-            $booking->payments()->create([
-                'user_id' => $booking->renter_id,
-                'type' => 'refund',
-                'method' => $booking->payment_method,
-                'amount' => $remainingDeposit,
-                'status' => $result['status'],
-                'receipt_no' => self::receiptNo('RF'),
-                'gateway_ref' => $result['gateway_ref'],
-                'account_hint' => $booking->payments()->where('type', 'charge')->value('account_hint'),
-                'description' => "Security deposit returned for {$booking->reference}",
-            ]);
+            $this->payments->refund($booking, $remainingDeposit, "Security deposit returned for {$booking->reference}", $actor);
         }
 
         $commission = (int) round(($booking->rental_subtotal + $booking->driver_fee_total) * Settings::get('commission_rate') / 100);
@@ -430,26 +388,21 @@ class BookingService
         return $booking->fresh();
     }
 
-    public function payBalance(Booking $booking, array $data): Booking
+    /** Opens a hosted checkout for the balance. The balance is cleared only when Xendit confirms the payment. */
+    public function payBalance(Booking $booking, string $method): Payment
     {
         if ($booking->balance_due <= 0) {
             throw ValidationException::withMessages(['booking' => 'There is no balance due on this trip.']);
         }
-        $charge = $this->gateway->charge($data['payment_method'], $booking->balance_due, $data);
-        $booking->payments()->create([
-            'user_id' => $booking->renter_id,
-            'type' => 'balance',
-            'method' => $data['payment_method'],
-            'amount' => $booking->balance_due,
-            'status' => $charge['status'],
-            'receipt_no' => self::receiptNo(),
-            'gateway_ref' => $charge['gateway_ref'],
-            'account_hint' => $charge['account_hint'],
-            'description' => "Remaining balance for {$booking->reference}",
-        ]);
-        $booking->log('payment', 'Remaining balance of '.Money::peso($booking->balance_due).' paid.', $booking->renter_id);
-        $booking->update(['balance_due' => 0, 'payment_status' => 'paid']);
-        return $booking->fresh();
+        foreach ($booking->payments()->where('type', 'balance')->where('status', 'pending')->get() as $old) $this->payments->verify($old);
+        if ($booking->fresh()->balance_due <= 0) {
+            throw ValidationException::withMessages(['booking' => 'There is no balance due on this trip.']);
+        }
+        try {
+            return $this->payments->startCheckout($booking->load('vehicle'), $method, 'balance');
+        } catch (PaymentGatewayException) {
+            throw ValidationException::withMessages(['payment' => 'We couldn\'t open the payment page just now. Nothing was charged. Please try again in a moment.']);
+        }
     }
 
     public function resolveIncident(Incident $incident, string $action, int $amount, ?string $notes, bool $suspendRenter, User $admin): Incident

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
-import { ArrowLeft, Calendar, CreditCard, KeyRound, Lock, MapPin, ShieldCheck, Smartphone, Wallet } from 'lucide-react'
+import { Link, useParams, useSearchParams } from 'react-router'
+import { ArrowLeft, Calendar, CreditCard, ExternalLink, KeyRound, Lock, MapPin, QrCode, ShieldCheck, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 import { PriceBreakdown } from '@/components/common/PriceBreakdown'
 import { RatingInline } from '@/components/common/RatingStars'
@@ -21,40 +21,7 @@ import { vehicleService } from '@/services/vehicles'
 import { SignAgreement, type Signing } from './SignAgreement'
 import type { PaymentMethod, ProtectionKey, RentalType } from '@/types'
 
-const METHOD_ICON = { gcash: Wallet, maya: Wallet, card: CreditCard, google_pay: Smartphone, apple_pay: Smartphone }
-
-export function PaymentFields({ method, values, setValue, errors }: { method: PaymentMethod; values: Record<string, string>; setValue: (k: string, v: string) => void; errors: Record<string, string> }) {
-  if (method === 'gcash' || method === 'maya') {
-    return (
-      <Input
-        label={`${method === 'gcash' ? 'GCash' : 'Maya'} mobile number`}
-        type="tel"
-        inputMode="numeric"
-        placeholder="0917 123 4567"
-        value={values.wallet_number ?? ''}
-        onChange={(e) => setValue('wallet_number', e.target.value)}
-        error={errors.wallet_number}
-        hint="You'll approve the payment in your app."
-      />
-    )
-  }
-  if (method === 'card') {
-    const fmtCard = (v: string) => v.replace(/\D/g, '').slice(0, 19).replace(/(\d{4})(?=\d)/g, '$1 ')
-    const fmtExp = (v: string) => {
-      const d = v.replace(/\D/g, '').slice(0, 4)
-      return d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d
-    }
-    return (
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Input label="Name on card" autoComplete="cc-name" value={values.card_name ?? ''} onChange={(e) => setValue('card_name', e.target.value)} wrapperClassName="sm:col-span-2" />
-        <Input label="Card number" autoComplete="cc-number" inputMode="numeric" placeholder="1234 5678 9012 3456" value={values.card_number ?? ''} onChange={(e) => setValue('card_number', fmtCard(e.target.value))} error={errors.card_number} wrapperClassName="sm:col-span-2" leftIcon={<CreditCard />} />
-        <Input label="Expiry" autoComplete="cc-exp" inputMode="numeric" placeholder="MM/YY" value={values.card_expiry ?? ''} onChange={(e) => setValue('card_expiry', fmtExp(e.target.value))} error={errors.card_expiry} />
-        <Input label="Security code" autoComplete="cc-csc" inputMode="numeric" placeholder="CVC" maxLength={4} value={values.card_cvc ?? ''} onChange={(e) => setValue('card_cvc', e.target.value.replace(/\D/g, ''))} error={errors.card_cvc} />
-      </div>
-    )
-  }
-  return <p className="rounded-xl bg-page p-3 text-sm text-ink-500">You'll confirm with {method === 'google_pay' ? 'Google Pay' : 'Face ID or Touch ID in Apple Pay'} when you tap the button below.</p>
-}
+const METHOD_ICON = { gcash: Wallet, maya: Wallet, card: CreditCard, qrph: QrCode, grabpay: Wallet, shopeepay: Wallet }
 
 export function PaymentMethodPicker({ value, onChange }: { value: PaymentMethod; onChange: (m: PaymentMethod) => void }) {
   return (
@@ -81,7 +48,6 @@ export function CheckoutSection() {
   const { vehicleId = '' } = useParams()
   const [params] = useSearchParams()
   const { user } = useAuth()
-  const navigate = useNavigate()
   const pickup = params.get('pickup') ?? ''
   const ret = params.get('return') ?? ''
   const type = (params.get('type') === 'driver' ? 'driver' : 'self') as RentalType
@@ -108,41 +74,35 @@ export function CheckoutSection() {
 
   const [driver, setDriver] = useState({ driver_name: user?.name ?? '', driver_phone: user?.phone ?? '', driver_email: user?.email ?? '' })
   const [method, setMethod] = useState<PaymentMethod>('gcash')
-  const [pay, setPay] = useState<Record<string, string>>({ wallet_number: user?.phone ?? '' })
   const [signing, setSigning] = useState<Signing>({ readToEnd: false, agree: false, name: '' })
   const [age, setAge] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const mutation = useMutation({
-    mutationFn: async () => {
-      // A short pause so the "processing" step feels like a real payment app.
-      const [booking] = await Promise.all([
-        bookingService.create({
-          vehicle_id: Number(vehicleId),
-          pickup_at: localToIso(pickup),
-          return_at: localToIso(ret),
-          rental_type: type,
-          protection_plan: plan,
-          ...driver,
-          payment_method: method,
-          ...pay,
-          agree_terms: signing.agree,
-          agreement_read_to_end: signing.readToEnd,
-          agreement_hash: agreement.data?.hash,
-          signature_name: signing.name,
-          confirm_age: type === 'self' ? age : true,
-        }),
-        new Promise((r) => setTimeout(r, 1200)),
-      ])
-      return booking
-    },
+    // The booking is saved as "awaiting payment" and we send the renter to Xendit's secure page. It is confirmed only
+    // when Xendit reports the payment as paid (see CheckoutReturnSection).
+    mutationFn: () =>
+      bookingService.create({
+        vehicle_id: Number(vehicleId),
+        pickup_at: localToIso(pickup),
+        return_at: localToIso(ret),
+        rental_type: type,
+        protection_plan: plan,
+        ...driver,
+        payment_method: method,
+        agree_terms: signing.agree,
+        agreement_read_to_end: signing.readToEnd,
+        agreement_hash: agreement.data?.hash,
+        signature_name: signing.name,
+        confirm_age: type === 'self' ? age : true,
+      }),
     onSuccess: (b) => {
-      toast.success('Payment received – your trip is booked!')
-      navigate(`/booking/${b.reference}/confirmed`, { replace: true })
+      if (!b.checkout_url) return toast.error('We could not open the payment page. Please try again.')
+      window.location.assign(b.checkout_url)
     },
     onError: (err) => {
       setErrors(getFieldErrors(err))
-      toast.error(getErrorMessage(err, 'We couldn\'t complete your payment. Please try again.'))
+      toast.error(getErrorMessage(err, 'We couldn\'t start your payment. Please try again.'))
     },
   })
 
@@ -202,8 +162,11 @@ export function CheckoutSection() {
               <span className="inline-flex items-center gap-1 text-xs font-semibold text-brand"><Lock className="size-3.5" /> Encrypted & secure</span>
             </div>
             <div className="mt-4"><PaymentMethodPicker value={method} onChange={(m) => { setMethod(m); setErrors({}) }} /></div>
-            <div className="mt-4"><PaymentFields method={method} values={pay} setValue={(k, val) => setPay({ ...pay, [k]: val })} errors={errors} /></div>
-            <p className="mt-3 text-xs text-ink-400">Payments run in test mode for this demo – no real money is moved. Test card: 4242 4242 4242 4242, any future date, any CVC.</p>
+            {errors.payment && <p className="mt-3 text-sm text-danger">{errors.payment}</p>}
+            <p className="mt-4 flex items-start gap-2 rounded-xl bg-page p-3 text-xs text-ink-500">
+              <ExternalLink className="mt-0.5 size-3.5 shrink-0" />
+              <span>When you tap the button you'll go to Xendit's secure payment page to finish with {PAYMENT_METHODS.find((m) => m.value === method)?.label}. Your card or wallet details never touch ByaheGo. Your trip is confirmed once the payment goes through, and the dates are held for you while you pay.</span>
+            </p>
           </Card>
 
           <Card className="p-5 sm:p-6">
@@ -229,7 +192,7 @@ export function CheckoutSection() {
           </Card>
 
           <Button type="submit" size="lg" className="w-full sm:w-auto" icon={<Lock className="size-4" />} loading={mutation.isPending} disabled={!q || !q.available || needsVerification}>
-            Confirm and pay {q ? peso(q.due_now) : ''}
+            Continue to payment {q ? `· ${peso(q.due_now)}` : ''}
           </Button>
         </div>
 
@@ -261,11 +224,11 @@ export function CheckoutSection() {
         </aside>
       </form>
 
-      {mutation.isPending && (
+      {(mutation.isPending || mutation.isSuccess) && (
         <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-ink-900/50 p-4">
           <div className="w-full max-w-xs animate-slide-up rounded-3xl bg-white p-6 text-center shadow-pop">
             <span className="mx-auto flex size-14 items-center justify-center rounded-full bg-brand-soft"><Lock className="size-6 animate-pulse text-brand" /></span>
-            <p className="mt-4 font-bold">Processing your payment…</p>
+            <p className="mt-4 font-bold">Opening the secure payment page…</p>
             <p className="mt-1 text-sm text-ink-500">Please don't close this page.</p>
           </div>
         </div>

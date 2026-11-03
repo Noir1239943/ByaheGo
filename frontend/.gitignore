@@ -25,3 +25,6 @@ dist-ssr
 
 # Environment
 .env
+
+# Local HTTPS certificate for testing payments (Xendit only redirects back to https addresses)
+.cert

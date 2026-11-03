@@ -26,6 +26,7 @@ export function TripCard({ b, base = '/account/trips' }: { b: BookingRow; base?:
           <span className="flex items-center gap-1"><CalendarDays className="size-4" /> {formatDateTime(b.pickup_at)} → {formatDateTime(b.return_at)}</span>
           <span className="flex items-center gap-1"><MapPin className="size-4" /> {b.pickup_label}</span>
         </p>
+        {b.status === 'pending' && <p className="mt-1 text-xs font-semibold text-warning">Not paid yet – open it to finish paying.</p>}
         {b.display_status === 'upcoming' && <p className="mt-1 text-xs font-semibold text-info">Starts in {timeUntil(b.pickup_at)}</p>}
       </div>
       <div className="flex items-center justify-between gap-3 sm:flex-col sm:items-end">

@@ -16,7 +16,7 @@
   <li><b>Free cancellation until:</b> {{ $freeUntil }}</li>
   @endunless
 </ul>
-<p>The signed rental agreement is attached as a PDF. You can also download it any time from your trip page.</p>
+<p>The signed rental agreement @if(!$forHost && $invoice)and your invoice are @else is @endif attached as a PDF. You can also download @if(!$forHost && $invoice)them @else it @endif any time from your trip page and billing history.</p>
 <p>See you on the road,<br>ByaheGo</p>
 </body>
 </html>

@@ -39,7 +39,7 @@ class AgreementAndCancellationTest extends TestCase
             $this->assertStringContainsStringIgnoringCase($needle, $text, "agreement should mention {$needle}");
         }
         $this->assertSame(hash('sha256', $text), $r->json('hash'));
-        $this->assertSame('2026.2', $r->json('version'));
+        $this->assertSame('2026.3', $r->json('version'));
         $this->assertSame($renter->name, $r->json('signer_name'));
         $this->assertSame($text, $this->preview($renter, $v)->json('text')); // deterministic
     }
@@ -72,7 +72,7 @@ class AgreementAndCancellationTest extends TestCase
         $res = $this->withHeader('User-Agent', 'TestBrowser/1.0')->as($renter)->postJson('/api/bookings', $this->bookingPayload($v, $this->window()) + [
             'signature_name' => 'santos reyes,  MARIA', 'agreement_hash' => $preview->json('hash'),
         ]);
-        $res->assertCreated()->assertJsonPath('agreement.has_copy', true)->assertJsonPath('agreement.signer_name', 'santos reyes,  MARIA')->assertJsonPath('agreement.version', '2026.2');
+        $res->assertCreated()->assertJsonPath('agreement.has_copy', true)->assertJsonPath('agreement.signer_name', 'santos reyes,  MARIA')->assertJsonPath('agreement.version', '2026.3');
         $b = Booking::where('reference', $res->json('reference'))->first();
         $a = $b->agreement;
         $this->assertSame($preview->json('text'), $a->text);
@@ -116,10 +116,12 @@ class AgreementAndCancellationTest extends TestCase
         $this->assertCount(2, $messages);
         $to = $messages->map(fn ($m) => $m->getOriginalMessage()->getTo()[0]->getAddress())->all();
         $this->assertEqualsCanonicalizing([$renter->email, $host->email], $to);
-        $atts = $messages->first()->getOriginalMessage()->getAttachments();
-        $this->assertCount(1, $atts);
-        $this->assertSame('pdf', $atts[0]->getMediaSubtype());
-        $this->assertStringContainsString('Booking confirmed', $messages->first()->getOriginalMessage()->getSubject());
+        $byTo = $messages->mapWithKeys(fn ($m) => [$m->getOriginalMessage()->getTo()[0]->getAddress() => $m->getOriginalMessage()]);
+        // The renter gets the signed agreement and the invoice; the host only the agreement.
+        $this->assertCount(2, $byTo[$renter->email]->getAttachments());
+        $this->assertCount(1, $byTo[$host->email]->getAttachments());
+        $this->assertSame('pdf', $byTo[$host->email]->getAttachments()[0]->getMediaSubtype());
+        $this->assertStringContainsString('Booking confirmed', $byTo[$renter->email]->getSubject());
     }
 
     public function test_a_broken_mail_server_does_not_undo_the_booking(): void

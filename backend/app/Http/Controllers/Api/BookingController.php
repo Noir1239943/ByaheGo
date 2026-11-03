@@ -8,6 +8,10 @@ use App\Models\Incident;
 use App\Models\Vehicle;
 use App\Services\AgreementService;
 use App\Services\BookingService;
+use App\Models\Payment;
+use App\Services\InvoiceService;
+use App\Services\PaymentGatewayException;
+use App\Services\PaymentService;
 use App\Services\PricingService;
 use App\Services\PaymentGateway;
 use App\Support\Notifier;
@@ -34,13 +38,13 @@ class BookingController extends Controller
             'active' => $q->where('status', 'active')->orderBy('return_at'),
             'past' => $q->where('status', 'completed')->orderByDesc('return_at'),
             'cancelled' => $q->where('status', 'cancelled')->orderByDesc('cancelled_at'),
-            default => $q->where('status', 'confirmed')->orderBy('pickup_at'),
+            default => $q->whereIn('status', ['confirmed', 'pending'])->orderBy('pickup_at'),
         };
         $counts = Booking::where('renter_id', $request->user()->id)->selectRaw('status, COUNT(*) as total')->groupBy('status')->pluck('total', 'status');
         return response()->json([
             'data' => $q->get()->map(fn ($b) => Present::bookingRow($b))->values(),
             'counts' => [
-                'upcoming' => (int) ($counts['confirmed'] ?? 0),
+                'upcoming' => (int) ($counts['confirmed'] ?? 0) + (int) ($counts['pending'] ?? 0),
                 'active' => (int) ($counts['active'] ?? 0),
                 'past' => (int) ($counts['completed'] ?? 0),
                 'cancelled' => (int) ($counts['cancelled'] ?? 0),
@@ -60,11 +64,6 @@ class BookingController extends Controller
             'driver_phone' => ['required', 'string', 'max:20'],
             'driver_email' => ['required', 'email'],
             'payment_method' => ['required', Rule::in(array_keys(PaymentGateway::METHODS))],
-            'wallet_number' => ['nullable', 'string', 'max:20'],
-            'card_number' => ['nullable', 'string', 'max:25'],
-            'card_expiry' => ['nullable', 'string', 'max:7'],
-            'card_cvc' => ['nullable', 'string', 'max:4'],
-            'card_name' => ['nullable', 'string', 'max:80'],
             'agree_terms' => ['accepted'],
             'agreement_read_to_end' => ['accepted'],
             'signature_name' => ['required', 'string', 'max:120'],
@@ -122,13 +121,40 @@ class BookingController extends Controller
 
     public function payBalance(Request $request, string $reference)
     {
-        $data = $request->validate([
-            'payment_method' => ['required', Rule::in(array_keys(PaymentGateway::METHODS))],
-            'wallet_number' => ['nullable', 'string'], 'card_number' => ['nullable', 'string'],
-            'card_expiry' => ['nullable', 'string'], 'card_cvc' => ['nullable', 'string'],
-        ]);
-        $booking = $this->bookings->payBalance($this->own($request, $reference), $data);
+        $data = $request->validate(['payment_method' => ['required', Rule::in(array_keys(PaymentGateway::METHODS))]]);
+        $payment = $this->bookings->payBalance($this->own($request, $reference), $data['payment_method']);
+        return response()->json(['checkout_url' => $payment->checkout_url]);
+    }
+
+    /**
+     * The renter lands here after Xendit's page (and the page also calls it while it waits). We ask Xendit directly,
+     * so it works on localhost where webhooks can't reach us.
+     */
+    public function verifyPayment(Request $request, string $reference, PaymentService $payments)
+    {
+        $booking = $payments->verifyBooking($this->own($request, $reference));
         return response()->json(Present::booking($booking));
+    }
+
+    /** Back to the payment page for an unpaid booking (a fresh page is opened if the old one ran out). */
+    public function pay(Request $request, string $reference, PaymentService $payments)
+    {
+        $data = $request->validate(['payment_method' => ['nullable', Rule::in(array_keys(PaymentGateway::METHODS))]]);
+        try {
+            $payment = $payments->resume($this->own($request, $reference), $data['payment_method'] ?? null);
+        } catch (PaymentGatewayException) {
+            throw ValidationException::withMessages(['payment' => 'We couldn\'t open the payment page just now. Nothing was charged. Please try again in a moment.']);
+        }
+        $booking = $this->own($request, $reference);
+        return response()->json(['checkout_url' => $payment->status === 'pending' ? $payment->checkout_url : null, 'booking' => Present::booking($booking)]);
+    }
+
+    public function invoicePdf(Request $request, int $id, InvoiceService $invoices)
+    {
+        $payment = Payment::where('id', $id)->where('user_id', $request->user()->id)->firstOrFail();
+        $invoice = $invoices->issueFor($payment);
+        abort_if(! $invoice, 404, 'There is no invoice for this payment yet.');
+        return $invoices->download($invoice);
     }
 
     public function review(Request $request, string $reference)

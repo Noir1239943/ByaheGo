@@ -21,7 +21,7 @@ ByaheGo/
 
 You can also log in with the email (e.g. `test123@byahego.test`). Other seeded renters/hosts use the same password.
 
-**Test payments** run in test mode (no real money): GCash/Maya with any 11-digit mobile number (e.g. `0917 123 4567`), card `4242 4242 4242 4242` (any future expiry, any CVC). Card `4000 0000 0000 0002` simulates a declined payment.
+**Test payments** run on Xendit's test mode (no real money). At checkout you are sent to Xendit's page: for GCash or Maya press **Proceed to Pay** on the test wallet page; for a card use `4000 0000 0000 1000` (expiry `12/30`, any CVC, any name). See *Payments (Xendit)* below.
 
 ---
 
@@ -34,7 +34,7 @@ You can also log in with the email (e.g. `test123@byahego.test`). Other seeded r
 | Nearest pick-up | **"Nearest to me"** sort uses the browser's location; distance is calculated on the server and shown on every card. "Show cars nearest to me" shortcut on the home search. |
 | Excess hours / penalty | **Late-return fee**: 60-minute grace period, then the vehicle's hourly late fee, capped at 1.5× the daily rate per day late. Calculated automatically when the host records the return, deducted from the deposit, any extra billed as a balance the renter pays online. Overdue trips are flagged. |
 | Mobile-first – app or web app? | **Installable PWA** (manifest, service worker, offline-cached app shell and vehicle photos, "Install the ByaheGo app" banner/menu item). Fully responsive layouts. |
-| Payment gateway, Apple Pay, Google Pay, online cash | Checkout supports **GCash, Maya** (e-wallet "online cash"), **cards, Google Pay and Apple Pay** through a payment-gateway service class (test mode). Swap in a live provider like PayMongo by replacing `app/Services/PaymentGateway.php`. |
+| Payment gateway, online cash | Checkout runs on **Xendit** hosted checkout: **GCash, Maya, cards, QR Ph, GrabPay, ShopeePay**. See *Payments (Xendit)* below. Apple Pay and Google Pay are not offered (not available on Xendit's Philippine channels). |
 | Live availability map – how is it real-time? | **Live map** (OpenStreetMap/Leaflet) with color-coded pins: available / on a trip now / booked for your dates. It **refreshes every 15 seconds** from the server, with a "Live · updated Xs ago" indicator. |
 | Filters on the server? | **Yes.** Type, price, seats, transmission, fuel, rental type (with driver), instant book, delivery, pet-friendly, location, text search and **date availability** are all filtered in the database. Filters live in the URL so results can be shared. |
 | Pagination – server or client? | **Server-side pagination** (Laravel `paginate`, 9 per page). The API returns one page + meta; the client renders numbered pages. |
@@ -103,7 +103,7 @@ cp .env.example .env                    # VITE_API_URL=http://localhost:8000
 npm run dev                             # http://localhost:5173
 ```
 
-Tests: `cd backend && php artisan test` (72 feature tests, run on an in-memory SQLite database so they never touch Neon: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, booking & payment, declined cards, 24-hour cancellation rule, refunds, late fees, damage/theft disputes, verification checks, host application & listing approval, suspensions, settings).
+Tests: `cd backend && php artisan test` (108 feature tests, run on an in-memory SQLite database so they never touch Neon, with Xendit faked: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, the rental agreement, Xendit checkout, webhooks, refunds and invoices, 24-hour cancellation rule, late fees, damage/theft disputes, suspensions, settings).
 
 ---
 
@@ -140,6 +140,50 @@ Tests: `cd backend && php artisan test` (72 feature tests, run on an in-memory S
 **Unpaid bookings.** A booking in `pending` status holds the car's dates until `expires_at` (admin setting, 30 minutes by default). `bookings:expire-pending` cancels expired ones every minute, and a lapsed hold stops blocking dates immediately, even before that job runs. Nothing creates pending bookings yet: the card/e-wallet checkout of Phase 4 will.
 
 **Scheduled jobs.** `docker/start.sh` runs `php artisan schedule:work` beside Apache: expire pending bookings (every minute), lift ended suspensions and settle old deposits (hourly). On Render's free plan the service sleeps after 15 minutes without traffic and the jobs pause. Because lapsed holds, ended suspensions and the cancellation window are all checked at request time too, nothing depends on the jobs running on time. On a paid or always-on host they simply run on schedule.
+
+---
+
+## Payments (Xendit)
+
+Checkout uses **Xendit's hosted payment page** (Payment Sessions). Card and wallet details are typed on Xendit's page and never reach our server.
+
+**Methods:** GCash, Maya, cards, QR Ph, GrabPay, ShopeePay (Xendit channel codes `GCASH`, `PAYMAYA`, `CARDS`, `QRPH`, `GRABPAY`, `SHOPEEPAY`). **Apple Pay and Google Pay are not offered**: Xendit's Philippine channels don't include them, and we don't fake them. If Xendit adds them, they are a one-line addition to `PaymentGateway::METHODS` / `CHANNELS`.
+
+**How a booking becomes paid**
+1. The renter signs the agreement and presses *Continue to payment*. The booking is saved as **pending** (dates held for `pending_booking_minutes`, default 30) and a Xendit session is opened for it.
+2. The renter pays on Xendit's page and is sent back to `/checkout/return/<booking>`.
+3. The booking becomes **confirmed only after Xendit says the session is completed**. Three things can trigger that check, and all of them end in the same idempotent `PaymentService::confirm()`: the **webhook**, the **return page** (asks the API, which asks Xendit, so it works on localhost where webhooks can't reach), and the **`payments:sync` task** (every 5 minutes). Nothing the browser or a webhook body claims is trusted: the server always re-reads the real state from Xendit's API.
+4. On confirmation: the invoice (`BYG-2026-000123`) is issued, the host is told, and renter and host get the confirmation email (agreement + invoice PDFs).
+
+**Refunds** go through Xendit's Refunds API (partial refunds supported): renter cancellation, host cancellation, deposit return, admin refund. Xendit answers *pending* first; the webhook (or `payments:sync`) finishes it and issues the refund receipt (`BYG-RF-2026-000045`). A refund Xendit refuses is saved as **failed** and never blocks a cancellation: the admin sees it on *Payments & refunds* and can **Retry** or mark it **Paid by hand**. Real rules seen in test mode: *Maya doesn't allow a partial refund on the day of payment* (a full refund is fine), and *card refunds only accept the reasons FRAUDULENT, DUPLICATE or REQUESTED_BY_CUSTOMER* (the app maps this for you).
+
+**Invoices and receipts** are PDFs made with dompdf, one per payment and one per refund, numbered in order and frozen when issued. They say *"System-generated invoice. Not a BIR-registered official receipt."* Renters download them from **Payments & billing** and the trip page, admins from *Payments & refunds*.
+
+### Set it up locally
+1. In your Xendit dashboard (test mode) create a **secret API key** that is allowed to create payments and refunds (menu names vary a little, look for *Settings → API keys*). Put it in `backend/.env` as `XENDIT_SECRET_KEY`.
+2. The **webhook verification token** (in the dashboard's webhook settings) goes in `XENDIT_CALLBACK_TOKEN`.
+3. Xendit only sends people back to **https** addresses, so the website needs a local certificate:
+   ```bash
+   cd frontend
+   mkdir .cert
+   openssl req -x509 -newkey rsa:2048 -nodes -keyout .cert/localhost-key.pem -out .cert/localhost.pem -days 365 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+   ```
+   `npm run dev` then serves **https://localhost:5173** (your browser warns once about the self-made certificate: *Advanced → Continue*). Set `FRONTEND_URL=https://localhost:5173` in `backend/.env`.
+4. Windows: if payments fail with *"SSL certificate problem"*, PHP has no CA list. Either set `XENDIT_CA_BUNDLE` (see `.env.example`) or put a `cacert.pem` path in `php.ini` (`curl.cainfo` and `openssl.cafile`).
+5. Webhooks can't reach `localhost`; you don't need them for local testing (the return page and `payments:sync` do the job). To try real webhooks, expose the API with a tunnel (for example ngrok) and register that URL as below.
+
+### Test each method (Xendit test mode)
+| Method | What to do on Xendit's page |
+|---|---|
+| GCash / Maya | choose the wallet, press **Pay**, then **Proceed to Pay** on the test wallet page |
+| Card | card `4000 0000 0000 1000`, expiry `12/30`, CVC `123`, any name, email and phone |
+| Refund | cancel a paid trip in *My trips* (shows *Refund processing*, then *Refunded* once Xendit finishes) |
+
+### Go live on Render
+1. Render → your service → Environment: add `XENDIT_SECRET_KEY` and `XENDIT_CALLBACK_TOKEN` (and make sure `FRONTEND_URL` is your Vercel URL, which is https).
+2. In the Xendit dashboard's webhook settings, set the URL for the payment-session and refund notifications to `https://<your-api>.onrender.com/api/webhooks/xendit`. The endpoint answers `401` if the token is wrong and `200` otherwise; it reacts to any event whose name starts with `payment_session` or `refund`, and ignores the rest.
+3. The container starts `php artisan schedule:work` (see `docker/start.sh`), which runs `payments:sync` every 5 minutes, `bookings:expire-pending` every minute and `deposits:release-due` hourly. The free Render plan sleeps, so these pause while it sleeps; every payment and refund is also re-checked whenever someone opens it.
+4. To accept real money, switch the key to the live secret key (`xnd_production_...`) once Xendit has activated your account and the channels (GCash, Maya, cards...) you want.
 
 ---
 

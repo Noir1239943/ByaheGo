@@ -190,19 +190,29 @@ class Present
         ];
     }
 
-    public static function payment(Payment $p): array
+    public static function payment(Payment $p, bool $admin = false): array
     {
+        $p->loadMissing('invoice');
         return [
             'id' => $p->id,
             'type' => $p->type,
             'method' => $p->method,
-            'method_label' => $p->method === 'deposit' ? 'Security deposit' : (PaymentGateway::METHODS[$p->method] ?? $p->method),
+            'method_label' => PaymentGateway::label($p->method),
             'amount' => $p->amount,
             'status' => $p->status,
             'receipt_no' => $p->receipt_no,
             'gateway_ref' => $p->gateway_ref,
             'account_hint' => $p->account_hint,
             'description' => $p->description,
+            'reason' => $p->type === 'refund' ? $p->reason : null,
+            'failure_reason' => $p->failure_reason,
+            'paid_at' => $p->paid_at?->toIso8601String(),
+            'invoice_no' => $p->invoice?->number,
+            'invoice_kind' => $p->invoice?->kind,
+            ...($admin ? [
+                'provider' => $p->provider, 'provider_session_id' => $p->provider_session_id, 'provider_payment_id' => $p->provider_payment_id,
+                'provider_refund_id' => $p->provider_refund_id, 'attempts' => $p->attempts, 'requested_by' => $p->requester?->name,
+            ] : []),
             'created_at' => $p->created_at?->toIso8601String(),
             'booking_reference' => $p->booking?->reference,
             'vehicle_name' => $p->booking?->vehicle?->name,
@@ -247,7 +257,7 @@ class Present
 
     public static function booking(Booking $b, string $viewer = 'renter'): array
     {
-        $b->loadMissing(['vehicle.hub', 'vehicle.photos', 'renter', 'host', 'payments.booking', 'inspections', 'incidents.reporter', 'review', 'agreement']);
+        $b->loadMissing(['vehicle.hub', 'vehicle.photos', 'renter', 'host', 'payments.booking', 'payments.invoice', 'payments.requester', 'inspections', 'incidents.reporter', 'review', 'agreement']);
         $plan = Protection::get($b->protection_plan);
         $service = app(BookingService::class);
         $hideExactPickup = $b->status === 'cancelled' && $viewer === 'renter';
@@ -284,7 +294,7 @@ class Present
             'pickup_lng' => $hideExactPickup ? $b->vehicle->publicLng() : $b->pickup_lng,
             'driver' => ['name' => $b->driver_name, 'phone' => $b->driver_phone, 'email' => $b->driver_email, 'license_no' => $b->driver_license_no],
             'payment_method' => $b->payment_method,
-            'payment_method_label' => PaymentGateway::METHODS[$b->payment_method] ?? $b->payment_method,
+            'payment_method_label' => PaymentGateway::label($b->payment_method),
             'agreement' => [
                 'version' => $b->agreement_version,
                 'accepted_at' => $b->agreement_accepted_at?->toIso8601String(),
@@ -306,7 +316,10 @@ class Present
             'vehicle' => self::vehicleCard($b->vehicle),
             'renter' => self::userBrief($b->renter),
             'host' => self::userBrief($b->host),
-            'payments' => $b->payments->map(fn ($p) => self::payment($p))->values(),
+            'payments' => $b->payments->map(fn ($p) => self::payment($p, $viewer === 'admin'))->values(),
+            // Only the renter of an unpaid booking gets the payment page link, so they can come back and finish paying.
+            'checkout_url' => $viewer === 'renter' && $b->status === 'pending' ? $b->payments->where('type', 'charge')->where('status', 'pending')->last()?->checkout_url : null,
+            'pay_by' => $b->status === 'pending' ? $b->expires_at?->toIso8601String() : null,
             'inspections' => $b->inspections->map(fn ($i) => [
                 'stage' => $i->stage, 'odometer' => $i->odometer, 'fuel_level' => $i->fuel_level,
                 'checklist' => $i->checklist, 'notes' => $i->notes, 'created_at' => $i->created_at?->toIso8601String(),
@@ -318,7 +331,8 @@ class Present
                 'reporter_role' => $i->reporter_id === $b->host_id ? 'host' : ($i->reporter_id === $b->renter_id ? 'renter' : 'admin'),
             ])->values(),
             'created_at' => $b->created_at?->toIso8601String(),
-            'invoice_no' => 'INV-'.$b->created_at?->format('Y').'-'.str_pad((string) $b->id, 5, '0', STR_PAD_LEFT),
+            // The number printed on the real invoice once the trip is paid. Older trips keep their old reference.
+            'invoice_no' => $b->payments->first(fn ($p) => $p->type === 'charge' && $p->invoice)?->invoice?->number ?? 'INV-'.$b->created_at?->format('Y').'-'.str_pad((string) $b->id, 5, '0', STR_PAD_LEFT),
         ];
         if ($viewer !== 'renter') {
             $data['commission'] = $b->commission ?: (int) round(($b->rental_subtotal + $b->driver_fee_total) * Settings::get('commission_rate') / 100);

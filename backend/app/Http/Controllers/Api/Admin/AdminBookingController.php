@@ -9,6 +9,8 @@ use App\Models\Incident;
 use App\Models\Payment;
 use App\Models\Payout;
 use App\Services\BookingService;
+use App\Services\InvoiceService;
+use App\Services\PaymentService;
 use App\Support\Notifier;
 use App\Support\Present;
 use Illuminate\Http\Request;
@@ -85,8 +87,12 @@ class AdminBookingController extends Controller
     {
         $data = $request->validate(['amount' => ['required', 'integer', 'min:1'], 'reason' => ['required', 'string', 'max:200']]);
         $booking = $this->find($reference);
-        $this->bookings->issueRefund($booking, $data['amount'], 'Refund: '.$data['reason'], $request->user());
-        AdminAuditLog::record($request->user(), 'booking.refund', $booking, $data['reason'], ['amount' => $data['amount']]);
+        $refund = $this->bookings->issueRefund($booking, $data['amount'], 'Refund: '.$data['reason'], $request->user(), 'REQUESTED_BY_CUSTOMER');
+        AdminAuditLog::record($request->user(), 'booking.refund', $booking, $data['reason'], ['amount' => $data['amount'], 'status' => $refund->status]);
+        if ($refund->status === 'failed') {
+            // Xendit said no (for example some wallets can't do a partial refund on the day of payment). It stays on the Payments page as a failed refund.
+            throw \Illuminate\Validation\ValidationException::withMessages(['amount' => 'Xendit could not refund this: '.($refund->failure_reason ?: 'the provider refused it').' It is saved as a failed refund on the Payments page, where you can retry it later or mark it as paid by hand.']);
+        }
         return response()->json(Present::booking($booking->fresh(), 'admin'));
     }
 
@@ -112,19 +118,55 @@ class AdminBookingController extends Controller
 
     public function payments(Request $request)
     {
-        $q = Payment::with(['booking.vehicle', 'user'])->latest('id');
+        $q = Payment::with(['booking.vehicle', 'user', 'invoice', 'requester'])->latest('id');
         if ($type = $request->input('type')) $q->where('type', $type);
+        if ($status = $request->input('status')) $q->where('status', $status);
+        if ($method = $request->input('method')) $q->where('method', $method);
+        if ($from = $request->input('from')) $q->whereDate('created_at', '>=', $from);
+        if ($to = $request->input('to')) $q->whereDate('created_at', '<=', $to);
         if ($term = $request->input('q')) {
             $like = '%'.mb_strtolower($term).'%';
-            $q->where(fn ($w) => $w->whereRaw('LOWER(receipt_no) LIKE ?', [$like])->orWhereHas('booking', fn ($b) => $b->whereRaw('LOWER(reference) LIKE ?', [$like])));
+            $q->where(fn ($w) => $w->whereRaw('LOWER(receipt_no) LIKE ?', [$like])->orWhereRaw('LOWER(provider_payment_id) LIKE ?', [$like])->orWhereHas('booking', fn ($b) => $b->whereRaw('LOWER(reference) LIKE ?', [$like])));
         }
-        return response()->json(Present::paginated($q->paginate(15), fn ($p) => Present::payment($p)) + [
+        return response()->json(Present::paginated($q->paginate(15), fn ($p) => Present::payment($p, true)) + [
             'summary' => [
-                'collected' => (int) Payment::whereIn('type', ['charge', 'balance'])->sum('amount'),
-                'refunded' => (int) Payment::where('type', 'refund')->sum('amount'),
+                'collected' => (int) Payment::whereIn('type', ['charge', 'balance'])->where('status', 'succeeded')->sum('amount'),
+                'refunded' => (int) Payment::where('type', 'refund')->where('status', 'succeeded')->sum('amount'),
+                'refunds_pending' => (int) Payment::where('type', 'refund')->where('status', 'pending')->sum('amount'),
+                'refunds_failed' => Payment::where('type', 'refund')->where('status', 'failed')->count(),
                 'fees' => (int) Payment::whereIn('type', ['late_fee', 'damage'])->sum('amount'),
             ],
         ]);
+    }
+
+    public function invoicePdf(int $id, InvoiceService $invoices)
+    {
+        $invoice = $invoices->issueFor(Payment::findOrFail($id));
+        abort_if(! $invoice, 404, 'There is no invoice for this payment.');
+        return $invoices->download($invoice);
+    }
+
+    /** Ask Xendit again about a payment or refund that is still pending. */
+    public function syncPayment(int $id, PaymentService $payments)
+    {
+        $p = Payment::findOrFail($id);
+        $p->type === 'refund' ? $payments->syncRefund($p) : $payments->verify($p);
+        return response()->json(Present::payment($p->fresh(['invoice', 'requester', 'booking.vehicle', 'user']), true));
+    }
+
+    public function retryRefund(Request $request, int $id, PaymentService $payments)
+    {
+        $p = $payments->retryRefund(Payment::findOrFail($id), $request->user());
+        AdminAuditLog::record($request->user(), 'refund.retry', $p, null, ['amount' => $p->amount, 'status' => $p->status]);
+        return response()->json(Present::payment($p->fresh(['invoice', 'requester', 'booking.vehicle', 'user']), true));
+    }
+
+    public function markRefundHandled(Request $request, int $id, PaymentService $payments)
+    {
+        $data = $request->validate(['note' => ['required', 'string', 'min:5', 'max:200']]);
+        $p = $payments->markRefundHandled(Payment::findOrFail($id), $request->user(), $data['note']);
+        AdminAuditLog::record($request->user(), 'refund.manual', $p, $data['note'], ['amount' => $p->amount]);
+        return response()->json(Present::payment($p->fresh(['invoice', 'requester', 'booking.vehicle', 'user']), true));
     }
 
     public function payouts(Request $request)

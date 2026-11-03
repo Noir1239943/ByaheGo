@@ -88,17 +88,37 @@ class AccountController extends Controller
     public function billing(Request $request)
     {
         $user = $request->user();
-        $payments = Payment::with('booking.vehicle')->where('user_id', $user->id)->latest('id')->get();
-        $sum = fn ($types) => (int) $payments->whereIn('type', $types)->sum('amount');
-        return response()->json([
+        $mine = Payment::where('user_id', $user->id);
+        $sum = fn (array $types, array $status = ['succeeded']) => (int) (clone $mine)->whereIn('type', $types)->whereIn('status', $status)->sum('amount');
+        $q = Payment::with(['booking.vehicle', 'invoice'])->where('user_id', $user->id)->latest('id');
+        // Filters: what kind of line, its status, and a date range. Paged on the server.
+        if ($type = $request->input('type')) {
+            $q->whereIn('type', match ($type) {
+                'payments' => ['charge', 'balance'],
+                'refunds' => ['refund'],
+                'deposits' => ['late_fee', 'damage'],
+                'fees' => ['late_fee', 'damage', 'cancellation_fee'],
+                default => [$type],
+            });
+            if ($type === 'deposits') $q->where('method', 'deposit');
+        }
+        if ($status = $request->input('status')) {
+            $q->where('status', $status);
+        } else {
+            // Payment pages that were opened and never paid are noise; they only show when asked for with the status filter.
+            $q->where(fn ($w) => $w->whereNotIn('type', ['charge', 'balance'])->orWhereNotIn('status', ['failed', 'expired']));
+        }
+        if ($from = $request->input('from')) $q->whereDate('created_at', '>=', $from);
+        if ($to = $request->input('to')) $q->whereDate('created_at', '<=', $to);
+        return response()->json(\App\Support\Present::paginated($q->paginate(15), fn ($p) => Present::payment($p)) + [
             'summary' => [
                 'total_paid' => $sum(['charge', 'balance']),
                 'total_refunded' => $sum(['refund']),
+                'refunds_pending' => $sum(['refund'], ['pending']),
                 'fees_and_charges' => $sum(['late_fee', 'damage']),
                 'balance_due' => (int) $user->bookings()->sum('balance_due'),
                 'deposits_on_hold' => (int) $user->bookings()->whereIn('deposit_status', ['held', 'on_hold'])->whereIn('status', ['confirmed', 'active', 'completed'])->sum('security_deposit'),
             ],
-            'data' => $payments->map(fn ($p) => Present::payment($p))->values(),
         ]);
     }
 

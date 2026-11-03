@@ -2,6 +2,7 @@ import { Badge, type BadgeTone } from '@/components/ui'
 
 const MAP: Record<string, [BadgeTone, string]> = {
   // trips
+  awaiting_payment: ['warning', 'Awaiting payment'],
   upcoming: ['info', 'Upcoming'],
   confirmed: ['info', 'Upcoming'],
   active: ['success', 'On trip'],

@@ -11,7 +11,7 @@ import { adminService } from '@/services/admin'
 import { bookingService } from '@/services/bookings'
 import { hostService } from '@/services/host'
 
-/** Printable invoice + official receipts (OR) for a booking. "Save as PDF" from the print dialog. */
+/** Printable summary of a booking's payments. "Save as PDF" from the print dialog. */
 export function InvoiceSection() {
   const { reference = '' } = useParams()
   const { user } = useAuth()
@@ -87,9 +87,9 @@ export function InvoiceSection() {
           {b.status === 'cancelled' && <p className="rounded-lg bg-danger-soft p-2 text-center text-xs font-semibold text-danger">Cancelled – fully refunded</p>}
         </div>
         <div className="mt-8">
-          <p className="text-xs font-bold tracking-wider text-ink-500 uppercase">Official receipts</p>
+          <p className="text-xs font-bold tracking-wider text-ink-500 uppercase">Payment records</p>
           <table className="mt-2 w-full text-sm">
-            <thead><tr className="border-b border-line-200 text-left text-xs text-ink-500"><th className="py-2">OR / Ref no.</th><th className="py-2">Date</th><th className="py-2">Type</th><th className="py-2">Method</th><th className="py-2 text-right">Amount</th></tr></thead>
+            <thead><tr className="border-b border-line-200 text-left text-xs text-ink-500"><th className="py-2">Receipt no.</th><th className="py-2">Date</th><th className="py-2">Type</th><th className="py-2">Method</th><th className="py-2 text-right">Amount</th></tr></thead>
             <tbody className="divide-y divide-line-100">
               {b.payments.map((p) => (
                 <tr key={p.id}>
@@ -104,7 +104,7 @@ export function InvoiceSection() {
           </table>
         </div>
         <footer className="mt-10 border-t border-line-200 pt-4 text-xs text-ink-400">
-          Thank you for riding with ByaheGo. This document is system-generated and serves as your invoice and official receipt for the payments listed. Rental agreement v{b.agreement.version} accepted {formatDateTime(b.agreement.accepted_at)}.
+          Thank you for riding with ByaheGo. This document is system-generated and is not a BIR-registered official receipt. Download the numbered PDF invoice for each payment from Payments & billing. Rental agreement v{b.agreement.version} accepted {formatDateTime(b.agreement.accepted_at)}.
         </footer>
       </article>
     </section>

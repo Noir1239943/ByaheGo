@@ -1,6 +1,6 @@
 import { peso } from '@/lib/format'
 
-export const AGREEMENT_VERSION = '2026.2'
+export const AGREEMENT_VERSION = '2026.3'
 
 const SECTIONS = (deposit?: number) => [
   {
@@ -8,7 +8,7 @@ const SECTIONS = (deposit?: number) => [
     title: '1. Booking and payment',
     body: [
       'Your booking is confirmed once payment succeeds. You pay the trip total plus a refundable security deposit.',
-      'Payments go through our payment partner (GCash, Maya, cards, Google Pay, Apple Pay). You get an official receipt (OR) and invoice for every payment in Payments & billing.',
+      'Payments go through our payment partner, Xendit (GCash, Maya, cards, QR Ph, GrabPay, ShopeePay). You get a system-generated invoice for every payment and a refund receipt for every refund in Payments & billing. These are not BIR-registered official receipts.',
     ],
   },
   {

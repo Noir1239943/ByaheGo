@@ -20,7 +20,7 @@ use Illuminate\Support\Str;
 class AgreementService
 {
     /** Bump this whenever the wording below changes. Old bookings keep the version (and text) they signed. */
-    public const VERSION = '2026.2';
+    public const VERSION = '2026.3';
 
     public const TZ = 'Asia/Manila';
 
@@ -97,7 +97,7 @@ class AgreementService
                 "Type of rental: {$rentalLabel}.",
             ]],
             ['title' => '3. Price and payment', 'body' => array_merge($lines, [
-                'All amounts are in Philippine pesos. You receive an official receipt for every payment in Payments & billing.',
+                'All amounts are in Philippine pesos. You pay on the secure page of our payment partner, Xendit. You receive a system-generated invoice for every payment and a refund receipt for every refund in Payments & billing. These are not BIR-registered official receipts.',
             ])],
             ['title' => '4. Security deposit', 'body' => [
                 "A refundable security deposit of {$peso($quote['security_deposit'])} is collected together with your payment and held during the trip.",

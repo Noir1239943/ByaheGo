@@ -35,6 +35,14 @@ return [
         ],
     ],
 
+    'xendit' => [
+        'secret' => env('XENDIT_SECRET_KEY'),
+        'callback_token' => env('XENDIT_CALLBACK_TOKEN'),
+        'base_url' => env('XENDIT_BASE_URL', 'https://api.xendit.co'),
+        // Only for machines whose PHP has no CA certificate list (typical on Windows). Certificate checking stays ON; this just says where the list is.
+        'ca_bundle' => env('XENDIT_CA_BUNDLE'),
+    ],
+
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),

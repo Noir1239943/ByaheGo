@@ -29,7 +29,9 @@ class BookingFlowTest extends TestCase
             ->assertJsonPath('deposit_status', 'held')
             ->assertJsonPath('can_cancel', true);
         $this->assertMatchesRegularExpression('/^BG-\d+$/', $res->json('reference'));
-        $this->assertSame('0917 ••• 4567', $res->json('payments.0.account_hint'));
+        $this->assertSame('GCash', $res->json('payments.0.account_hint'));
+        $this->assertSame('succeeded', $res->json('payments.0.status'));
+        $this->assertMatchesRegularExpression('/^BYG-\d{4}-\d{6}$/', $res->json('payments.0.invoice_no'));
         $this->assertStringStartsWith('OR-', $res->json('payments.0.receipt_no'));
         $this->assertNotNull($res->json('agreement.accepted_at'));
     }
@@ -47,18 +49,13 @@ class BookingFlowTest extends TestCase
         ])->assertStatus(422)->assertJsonValidationErrors('pickup_at');
     }
 
-    public function test_cannot_book_own_vehicle_and_declined_card(): void
+    public function test_cannot_book_own_vehicle(): void
     {
         $host = $this->host();
         $host->update(['verification_status' => 'verified']);
         $v = $this->vehicle([], $host);
         $this->book($host, $v)->assertStatus(422)->assertJsonValidationErrors('vehicle');
-        $u = $this->verifiedRenter();
-        $this->book($u, $v, ['payment_method' => 'card', 'card_number' => '4000 0000 0000 0002', 'card_expiry' => '12/30', 'card_cvc' => '123'])
-            ->assertStatus(422)->assertJsonValidationErrors('card_number');
         $this->assertDatabaseCount('bookings', 0);
-        $this->book($u, $v, ['payment_method' => 'card', 'card_number' => '4242 4242 4242 4242', 'card_expiry' => '12/30', 'card_cvc' => '123'])
-            ->assertCreated()->assertJsonPath('payments.0.account_hint', '•••• 4242');
     }
 
     public function test_cancel_a_day_before_gets_full_refund(): void
@@ -141,8 +138,13 @@ class BookingFlowTest extends TestCase
         $this->assertSame(2000, $b->balance_due); // 7,000 − 5,000 deposit
         $this->assertSame('balance_due', $b->payment_status);
 
-        $this->as($u)->postJson("/api/bookings/{$ref}/pay-balance", ['payment_method' => 'maya', 'wallet_number' => '09181112222'])
-            ->assertOk()->assertJsonPath('balance_due', 0)->assertJsonPath('payment_status', 'paid');
+        // Paying the balance opens a Xendit page; it is cleared only once Xendit reports it paid.
+        $this->xendit['session_status'] = 'ACTIVE';
+        $url = $this->as($u)->postJson("/api/bookings/{$ref}/pay-balance", ['payment_method' => 'maya'])->assertOk()->json('checkout_url');
+        $this->assertStringStartsWith('https://pay.test/', $url);
+        $this->payBooking($u, $ref)->assertOk()->assertJsonPath('balance_due', 2000)->assertJsonPath('payment_status', 'balance_due');
+        $this->xendit['session_status'] = 'COMPLETED';
+        $this->payBooking($u, $ref)->assertOk()->assertJsonPath('balance_due', 0)->assertJsonPath('payment_status', 'paid');
     }
 
     public function test_theft_report_lets_admin_suspend_renter(): void

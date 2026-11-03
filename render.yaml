@@ -36,6 +36,10 @@ services:
         value: "false"      # true = auto-approve clean ID submissions (auto-reject is always on)
       - key: FRONTEND_URL
         sync: false        # your Vercel URL, e.g. https://byahego.vercel.app (OAuth return + password reset links)
+      - key: XENDIT_SECRET_KEY
+        sync: false        # Xendit secret key (xnd_development_... while testing, xnd_production_... when live)
+      - key: XENDIT_CALLBACK_TOKEN
+        sync: false        # Xendit dashboard -> Settings -> Webhooks -> "Callback verification token"
       - key: GOOGLE_CLIENT_ID
         sync: false        # optional, for "Continue with Google"
       - key: GOOGLE_CLIENT_SECRET

@@ -3,7 +3,7 @@ import { SectionHeading } from '@/components/common/SectionHeading'
 
 const ITEMS = [
   { icon: ShieldCheck, title: 'Verified hosts and vehicles', text: 'Every host is ID-checked and every vehicle is reviewed by our team before it goes live.' },
-  { icon: Wallet, title: 'Clear, all-in pricing', text: 'See the full price before you book. Pay with GCash, Maya, cards, Google Pay or Apple Pay.' },
+  { icon: Wallet, title: 'Clear, all-in pricing', text: 'See the full price before you book. Pay with GCash, Maya, cards, QR Ph, GrabPay or ShopeePay.' },
   { icon: Headset, title: '24/7 roadside support', text: 'Flat tire at midnight in Moalboal? Our team picks up, day or night.' },
   { icon: MapPin, title: 'Pick up near you', text: 'Meet your host at a ByaheGo hub or nearby spot – sort by distance to find the closest car.' },
 ]
