@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams, useSearchParams } from 'react-router'
-import { AlertTriangle, ArrowLeft, CalendarPlus, Car, Download, FileText, Headset, KeyRound, MapPin, Receipt, ShieldCheck, Star, User } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CalendarPlus, Camera, Car, Clock, Download, FileText, Headset, KeyRound, MapPin, Receipt, ShieldCheck, Star, User } from 'lucide-react'
 import { toast } from 'sonner'
 import { InfoRow } from '@/components/common/InfoRow'
 import { PriceBreakdown } from '@/components/common/PriceBreakdown'
@@ -16,14 +16,16 @@ import { IncidentsList } from '@/components/features/bookings/IncidentsList'
 import { InspectionsList } from '@/components/features/bookings/InspectionsList'
 import { PaymentsList } from '@/components/features/bookings/PaymentsList'
 import { TripTimeline } from '@/components/features/bookings/TripTimeline'
-import { Alert, Button, Card, CardBody, CardHeader, Modal, Select, Textarea } from '@/components/ui'
-import { getErrorMessage } from '@/lib/api'
+import { Alert, Button, Card, CardBody, CardHeader, Input, Modal, Select, Textarea } from '@/components/ui'
+import { TripPhotos } from '@/components/features/trip/TripPhotos'
+import { getErrorMessage, getFieldErrors } from '@/lib/api'
 import { parseAgreementText } from '@/lib/agreement'
 import { downloadIcs } from '@/lib/calendar'
 import { downloadFile } from '@/lib/download'
 import { cn } from '@/lib/cn'
-import { formatDateTime, peso, timeUntil } from '@/lib/format'
+import { formatDateTime, localToIso, peso, timeUntil, toLocalInput } from '@/lib/format'
 import { bookingService } from '@/services/bookings'
+import { tripService } from '@/services/trip'
 import type { PaymentMethod } from '@/types'
 
 export function TripDetailSection() {
@@ -31,7 +33,9 @@ export function TripDetailSection() {
   const [params, setParams] = useSearchParams()
   const qc = useQueryClient()
   const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['booking', reference], queryFn: () => bookingService.get(reference) })
-  const [modal, setModal] = useState<null | 'cancel' | 'review' | 'pay' | 'report' | 'agreement'>(null)
+  const [modal, setModal] = useState<null | 'cancel' | 'review' | 'pay' | 'report' | 'agreement' | 'extend'>(null)
+  const [extend, setExtend] = useState({ return_at: '', note: '' })
+  const [extendErrors, setExtendErrors] = useState<Record<string, string>>({})
   const [reason, setReason] = useState('')
   const [rating, setRating] = useState(5)
   const [comment, setComment] = useState('')
@@ -64,6 +68,11 @@ export function TripDetailSection() {
     mutationFn: () => bookingService.pay(reference),
     onSuccess: (r) => (r.checkout_url ? window.location.assign(r.checkout_url) : done(r.booking.status === 'cancelled' ? 'This booking expired because it wasn\'t paid in time.' : 'Your payment was received.')),
     onError: (e) => toast.error(getErrorMessage(e)),
+  })
+  const requestMore = useMutation({
+    mutationFn: () => tripService.requestExtension(reference, { return_at: localToIso(extend.return_at), note: extend.note || undefined }),
+    onSuccess: () => { setExtendErrors({}); done('Request sent. Your host will approve or decline it.') },
+    onError: (e) => { setExtendErrors(getFieldErrors(e)); toast.error(getErrorMessage(e)) },
   })
   const reportIt = useMutation({ mutationFn: () => bookingService.reportIncident(reference, report), onSuccess: () => done('Report sent. Our team will contact you shortly.'), onError: (e) => toast.error(getErrorMessage(e)) })
 
@@ -101,7 +110,26 @@ export function TripDetailSection() {
           We're holding the dates for you{b.pay_by ? ` until ${formatDateTime(b.pay_by)}` : ''}. Nothing is charged until you pay, and the host is only told once the payment goes through.
         </Alert>
       )}
-      {s === 'overdue' && <Alert tone="danger" title="Your return is overdue">Please return the vehicle as soon as possible. Hourly late fees apply after the 60-minute grace period. Call support if you need help.</Alert>}
+      {b.status === 'confirmed' && b.trip.can_checkin && (
+        <Alert tone="brand" icon={<Camera />} title="Take your check-in photos" action={<Button size="sm" to={`/trips/${b.reference}/inspect/checkin`}>Start check-in</Button>}>
+          Photograph the car and the dashboard before you drive off: 10 quick photos with your phone's camera. They protect you from being blamed for damage that was already there. Your host can't hand over the keys until this is done.
+        </Alert>
+      )}
+      {b.status === 'confirmed' && !b.trip.checkin && !b.trip.can_checkin && b.trip.checkin_opens_at && (
+        <Alert tone="info" icon={<Camera />} title="Check-in photos">Check-in opens {formatDateTime(b.trip.checkin_opens_at)}, 12 hours before pick-up.</Alert>
+      )}
+      {b.status === 'confirmed' && b.trip.checkin && <Alert tone="success" title="Check-in submitted">Your host has been told. Bring your license and meet at the pick-up spot.</Alert>}
+      {b.status === 'active' && b.trip.can_checkout && (
+        <Alert tone={b.trip.late.is_overdue ? 'danger' : 'brand'} icon={<Camera />} title={b.trip.late.is_overdue ? `Return overdue by ${b.trip.overdue_hours} hour(s)` : 'Ready to return the car?'} action={<Button size="sm" to={`/trips/${b.reference}/inspect/checkout`}>Take return photos</Button>}>
+          {b.trip.late.is_overdue
+            ? `Late fee so far: ${peso(b.trip.late.fee)}. It is counted when you submit the return photos and taken from your deposit.`
+            : 'Take the same 10 photos again and enter the odometer and fuel. Returning after the return time costs ' + peso(b.trip.late.per_hour) + ' per hour once the ' + b.trip.late.grace_minutes + '-minute grace period is over.'}
+        </Alert>
+      )}
+      {b.status === 'active' && b.trip.checkout_submitted_at && <Alert tone="info" title="Return photos submitted">Waiting for your host to review them{b.trip.host_review_due_at ? ` (by ${formatDateTime(b.trip.host_review_due_at)}, or the trip completes automatically)` : ''}.{b.trip.late.fee > 0 ? ` Excess fee: ${peso(b.trip.late.fee)} for ${b.trip.late.hours} hour(s), taken from your deposit.` : ''}</Alert>}
+      {b.trip.extension?.status === 'pending' && <Alert tone="info" title="Waiting for your host">You asked to return on {formatDateTime(b.trip.extension.requested_return_at)}. Until your host answers, the original return time still applies.</Alert>}
+      {b.trip.extension?.status === 'approved' && b.status === 'active' && <Alert tone="success" title="Extension approved">New return time: {formatDateTime(b.return_at)}. No late fee until then.</Alert>}
+      {s === 'overdue' && <Alert tone="danger" title="Your return is overdue">Please return the vehicle as soon as possible. Excess-hour fees apply after the grace period. Take the return photos in the app, or call support if you need help.</Alert>}
       {b.balance_due > 0 && (
         <Alert tone="danger" title={`${peso(b.balance_due)} balance due`} action={<Button size="sm" onClick={() => setModal('pay')}>Pay now</Button>}>
           Trip charges were more than your deposit. Settle the balance to keep booking with ByaheGo.
@@ -129,7 +157,7 @@ export function TripDetailSection() {
 
           <Card>
             <CardHeader title="Vehicle condition" description="Recorded together with your host – this protects you from being charged for old damage." />
-            <CardBody><InspectionsList inspections={b.inspections} /></CardBody>
+            <CardBody className="space-y-4"><TripPhotos trip={b.trip} /><InspectionsList inspections={b.inspections} /></CardBody>
           </Card>
 
           {b.incidents.length > 0 && (
@@ -170,6 +198,8 @@ export function TripDetailSection() {
             {['active', 'completed'].includes(b.status) && (
               <Button variant="secondary" fullWidth icon={<AlertTriangle className="size-4" />} onClick={() => setModal('report')}>Report a problem</Button>
             )}
+            {b.trip.can_request_extension && <Button variant="secondary" fullWidth icon={<Clock className="size-4" />} onClick={() => { setExtend({ return_at: toLocalInput(new Date(new Date(b.return_at).getTime() + 24 * 3600_000)), note: '' }); setModal('extend') }}>Need more time?</Button>}
+            {b.status !== 'cancelled' && <p className="rounded-xl bg-page p-3 text-xs text-ink-700"><b>Late return:</b> {peso(b.trip.late.per_hour)} per hour after a {b.trip.late.grace_minutes}-minute grace period. {b.trip.late.full_day_after_hours}+ hours late counts as one extra full day. Ask your host for more time before the return time to avoid it.</p>}
             <Button variant="secondary" fullWidth icon={<FileText className="size-4" />} onClick={() => setModal('agreement')}>Rental agreement</Button>
             <Button variant="ghost" fullWidth icon={<Headset className="size-4" />} to="/help#contact">Contact support</Button>
             <Button variant="ghost" fullWidth icon={<Car className="size-4" />} to={`/vehicles/${v.id}`}>View vehicle</Button>
@@ -208,9 +238,17 @@ export function TripDetailSection() {
         <PaymentMethodPicker value={method} onChange={setMethod} />
       </Modal>
 
+      <Modal open={modal === 'extend'} onClose={() => setModal(null)} title="Ask to return later" description="Your host decides. If they approve, the return time changes and no late fee applies until the new time." size="sm" footer={<Button loading={requestMore.isPending} disabled={!extend.return_at} onClick={() => requestMore.mutate()}>Send request</Button>}>
+        <div className="space-y-4">
+          <p className="text-sm text-ink-500">Current return time: <b>{formatDateTime(b.return_at)}</b></p>
+          <Input label="New return time" type="datetime-local" value={extend.return_at} onChange={(e) => setExtend({ ...extend, return_at: e.target.value })} error={extendErrors.return_at} />
+          <Textarea label="Message to your host (optional)" rows={2} value={extend.note} onChange={(e) => setExtend({ ...extend, note: e.target.value })} />
+        </div>
+      </Modal>
+
       <Modal open={modal === 'report'} onClose={() => setModal(null)} title="Report a problem" description="For emergencies, call our 24/7 line: (032) 888 2924." footer={<Button loading={reportIt.isPending} disabled={report.description.trim().length < 10} onClick={() => reportIt.mutate()}>Send report</Button>}>
         <div className="space-y-4">
-          <Select label="What happened?" value={report.type} onChange={(e) => setReport({ ...report, type: e.target.value })} options={[{ value: 'breakdown', label: 'The vehicle broke down' }, { value: 'accident', label: 'I was in an accident' }, { value: 'damage', label: 'I found damage' }, { value: 'other', label: 'Something else' }]} />
+          <Select label="What happened?" value={report.type} onChange={(e) => setReport({ ...report, type: e.target.value })} options={[{ value: 'breakdown', label: 'The vehicle broke down' }, { value: 'accident', label: 'I was in an accident' }, { value: 'damage', label: 'I found damage' }, { value: 'stolen', label: 'The car was stolen while I was renting' }, { value: 'other', label: 'Something else' }]} />
           <Textarea label="Tell us more" rows={4} value={report.description} onChange={(e) => setReport({ ...report, description: e.target.value })} placeholder="Where are you and what happened? Are you safe?" />
         </div>
       </Modal>

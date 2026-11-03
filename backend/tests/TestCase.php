@@ -6,6 +6,7 @@ use App\Models\DriverLicense;
 use App\Models\Hub;
 use App\Models\User;
 use App\Models\Vehicle;
+use App\Services\TripService;
 use App\Support\Settings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
@@ -171,6 +172,17 @@ abstract class TestCase extends BaseTestCase
             return $paid;
         }
         return $res;
+    }
+
+    /** The renter does the guided photos (all ten shots) and submits the check-in or check-out. */
+    protected function inspect(User $user, string $ref, string $stage, array $over = []): TestResponse
+    {
+        foreach (array_keys(TripService::ANGLES) as $angle) {
+            $this->as($user)->post("/api/bookings/{$ref}/inspection/{$stage}/photos", [
+                'file' => $this->fakeImage($angle.'.jpg'), 'angle' => $angle, 'live' => true, 'device_time' => now()->toIso8601String(), 'lat' => 10.3157, 'lng' => 123.8854,
+            ], ['Accept' => 'application/json'])->assertCreated();
+        }
+        return $this->as($user)->postJson("/api/bookings/{$ref}/inspection/{$stage}", $over + ['odometer' => 12000, 'fuel_level' => 100]);
     }
 
     protected function fakeImage(string $name = 'photo.jpg', int $w = 1200, int $h = 800): UploadedFile

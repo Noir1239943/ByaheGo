@@ -68,6 +68,10 @@ class AdminMiscController extends Controller
             'default_security_deposit' => ['required', 'integer', 'between:0,100000'],
             'cancellation_fee' => ['required', 'integer', 'between:0,10000'],
             'pending_booking_minutes' => ['required', 'integer', 'between:5,240'],
+            'excess_hours_full_day' => ['required', 'integer', 'between:1,23'],
+            'checkin_host_window_hours' => ['required', 'integer', 'between:1,72'],
+            'host_review_hours' => ['required', 'integer', 'between:1,168'],
+            'theft_overdue_hours' => ['required', 'integer', 'between:1,72'],
         ]);
         Settings::set($data);
         AdminAuditLog::record($request->user(), 'settings.update', null, null, $data);

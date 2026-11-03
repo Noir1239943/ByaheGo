@@ -13,8 +13,8 @@ export const mediaService = {
     return res.data
   },
   /** Private documents (licenses, OR/CR) need the sign-in token, so load them as a blob URL. */
-  async objectUrl(id: number) {
-    const res = await api.get(`/media/${id}`, { responseType: 'blob' })
+  async objectUrl(id: number, width?: number) {
+    const res = await api.get(`/media/${id}`, { responseType: 'blob', params: width ? { w: width } : undefined })
     return URL.createObjectURL(res.data as Blob)
   },
 }

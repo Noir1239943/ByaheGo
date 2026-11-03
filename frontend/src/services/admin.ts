@@ -39,6 +39,7 @@ export const adminService = {
   booking: (reference: string) => api.get<Booking>(`/admin/bookings/${reference}`).then((r) => r.data),
   cancelBooking: (reference: string, reason: string, refund: boolean) => api.post<Booking>(`/admin/bookings/${reference}/cancel`, { reason, refund }).then((r) => r.data),
   refund: (reference: string, amount: number, reason: string) => api.post<Booking>(`/admin/bookings/${reference}/refund`, { amount, reason }).then((r) => r.data),
+  clearFlag: (reference: string, note: string) => api.post<Booking>(`/admin/bookings/${reference}/clear-flag`, { note }).then((r) => r.data),
   note: (reference: string, note: string) => api.post<Booking>(`/admin/bookings/${reference}/note`, { note }).then((r) => r.data),
   message: (reference: string, to: 'renter' | 'host', message: string) => api.post(`/admin/bookings/${reference}/message`, { to, message }),
   payments: (params: Params) => api.get<Paginated<Payment> & { summary: { collected: number; refunded: number; refunds_pending: number; refunds_failed: number; fees: number } }>('/admin/payments', { params }).then((r) => r.data),

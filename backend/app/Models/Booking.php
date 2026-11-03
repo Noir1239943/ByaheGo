@@ -21,6 +21,9 @@ class Booking extends Model
         'settled_at' => 'datetime',
         'cancelled_at' => 'datetime',
         'expires_at' => 'datetime',
+        'checkout_submitted_at' => 'datetime',
+        'host_review_due_at' => 'datetime',
+        'return_reminder_sent_at' => 'datetime',
         'pickup_lat' => 'float',
         'pickup_lng' => 'float',
     ];
@@ -31,6 +34,8 @@ class Booking extends Model
     public function payments(): HasMany { return $this->hasMany(Payment::class)->orderBy('id'); }
     public function events(): HasMany { return $this->hasMany(BookingEvent::class)->orderByDesc('id'); }
     public function inspections(): HasMany { return $this->hasMany(Inspection::class)->orderBy('id'); }
+    public function inspectionPhotos(): HasMany { return $this->hasMany(InspectionPhoto::class)->orderBy('id'); }
+    public function extensions(): HasMany { return $this->hasMany(BookingExtension::class)->orderByDesc('id'); }
     public function incidents(): HasMany { return $this->hasMany(Incident::class)->orderByDesc('id'); }
     public function review(): HasOne { return $this->hasOne(Review::class); }
     public function payout(): HasOne { return $this->hasOne(Payout::class); }

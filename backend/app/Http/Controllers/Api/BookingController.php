@@ -181,14 +181,21 @@ class BookingController extends Controller
             return response()->json(['message' => 'You can report a problem during or after your trip.'], 422);
         }
         $data = $request->validate([
-            'type' => ['required', Rule::in(['accident', 'breakdown', 'damage', 'other'])],
+            'type' => ['required', Rule::in(['accident', 'breakdown', 'damage', 'stolen', 'other'])],
             'description' => ['required', 'string', 'min:10', 'max:2000'],
-            'photo_ids' => ['nullable', 'array'],
+            'photo_ids' => ['nullable', 'array', 'max:12'],
+            'photo_ids.*' => ['integer'],
+            'lat' => ['nullable', 'numeric', 'between:-90,90'],
+            'lng' => ['nullable', 'numeric', 'between:-180,180'],
         ], ['description.min' => 'Please tell us a bit more about what happened.']);
+        // Photos must be the renter's own uploads.
+        $data['photo_ids'] = \App\Models\Media::whereIn('id', $data['photo_ids'] ?? [])->where('user_id', $request->user()->id)->pluck('id')->all();
         Incident::create($data + ['booking_id' => $booking->id, 'reporter_id' => $request->user()->id]);
-        $booking->log('incident', 'Renter reported: '.$data['type'].'.', $request->user()->id);
-        Notifier::admins('Renter reported a problem', "Booking {$booking->reference}: {$data['type']}.", '/admin/disputes', 'warning');
-        Notifier::send($booking->host_id, 'Your renter reported a problem', "Booking {$booking->reference}: {$data['type']}. Our team is on it.", "/host/bookings/{$booking->reference}", 'warning');
+        $urgent = in_array($data['type'], ['stolen', 'accident'], true);
+        $label = $data['type'] === 'stolen' ? 'car stolen while renting' : $data['type'];
+        $booking->log('incident', 'Renter reported: '.$label.'.', $request->user()->id);
+        Notifier::admins($urgent ? 'URGENT: renter reported '.$label : 'Renter reported a problem', "Booking {$booking->reference}: {$label}.", '/admin/disputes', $urgent ? 'danger' : 'warning');
+        Notifier::send($booking->host_id, $urgent ? 'URGENT: your renter reported '.$label : 'Your renter reported a problem', "Booking {$booking->reference}: {$label}. Our team is on it.", "/host/bookings/{$booking->reference}", $urgent ? 'danger' : 'warning');
         return response()->json(Present::booking($booking->fresh()), 201);
     }
 }

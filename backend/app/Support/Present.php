@@ -122,6 +122,12 @@ class Present
             'delivery_fee' => $v->delivery_fee,
             'min_days' => $v->min_days,
             'grace_minutes' => $v->grace_minutes,
+            'late_terms' => [
+                'grace_minutes' => (int) ($v->grace_minutes ?? Settings::get('late_grace_minutes')),
+                'per_hour' => (int) $v->late_fee_per_hour,
+                'full_day_after_hours' => (int) Settings::get('excess_hours_full_day'),
+                'daily_rate' => (int) $v->daily_rate,
+            ],
             'fuel_policy' => $v->fuel_policy,
             'status' => $v->status,
             'pickup' => [
@@ -231,6 +237,9 @@ class Present
             'status' => $i->status,
             'resolution_notes' => $i->resolution_notes,
             'photo_ids' => $i->photo_ids ?? [],
+            'pins' => $i->pins ?? [],
+            'lat' => $i->lat,
+            'lng' => $i->lng,
             'reporter' => self::userBrief($i->reporter),
             'reporter_role' => $i->reporter_id === $i->booking?->host_id ? 'host' : ($i->reporter_id === $i->booking?->renter_id ? 'renter' : 'admin'),
             'created_at' => $i->created_at?->toIso8601String(),
@@ -257,7 +266,7 @@ class Present
 
     public static function booking(Booking $b, string $viewer = 'renter'): array
     {
-        $b->loadMissing(['vehicle.hub', 'vehicle.photos', 'renter', 'host', 'payments.booking', 'payments.invoice', 'payments.requester', 'inspections', 'incidents.reporter', 'review', 'agreement']);
+        $b->loadMissing(['vehicle.hub', 'vehicle.photos', 'renter', 'host', 'payments.booking', 'payments.invoice', 'payments.requester', 'inspections.photos.uploader', 'incidents.reporter', 'review', 'agreement']);
         $plan = Protection::get($b->protection_plan);
         $service = app(BookingService::class);
         $hideExactPickup = $b->status === 'cancelled' && $viewer === 'renter';
@@ -303,6 +312,7 @@ class Present
                 'hash' => $b->agreement?->hash,
                 'text' => $b->agreement?->text,
             ],
+            'trip' => app(\App\Services\TripService::class)->present($b, $viewer),
             'cancellation_fee' => (int) $b->cancellation_fee,
             // What a renter would be charged for cancelling now (0 = free). The platform fee never exceeds the trip total.
             'cancellation_fee_if_cancelled' => min((int) Settings::get('cancellation_fee'), (int) $b->total),
@@ -320,7 +330,7 @@ class Present
             // Only the renter of an unpaid booking gets the payment page link, so they can come back and finish paying.
             'checkout_url' => $viewer === 'renter' && $b->status === 'pending' ? $b->payments->where('type', 'charge')->where('status', 'pending')->last()?->checkout_url : null,
             'pay_by' => $b->status === 'pending' ? $b->expires_at?->toIso8601String() : null,
-            'inspections' => $b->inspections->map(fn ($i) => [
+            'inspections' => $b->inspections->whereIn('stage', ['pickup', 'return'])->map(fn ($i) => [
                 'stage' => $i->stage, 'odometer' => $i->odometer, 'fuel_level' => $i->fuel_level,
                 'checklist' => $i->checklist, 'notes' => $i->notes, 'created_at' => $i->created_at?->toIso8601String(),
             ])->values(),

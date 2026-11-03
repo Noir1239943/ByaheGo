@@ -9,6 +9,7 @@ use App\Models\Incident;
 use App\Models\Payment;
 use App\Models\Payout;
 use App\Services\BookingService;
+use App\Services\EvidenceService;
 use App\Services\InvoiceService;
 use App\Services\PaymentService;
 use App\Support\Notifier;
@@ -68,6 +69,31 @@ class AdminBookingController extends Controller
     public function agreementPdf(string $reference, \App\Services\AgreementService $agreements)
     {
         return $agreements->download($this->find($reference));
+    }
+
+    /** One PDF for the police or an insurer. Every download is logged. */
+    public function evidencePdf(Request $request, string $reference, EvidenceService $evidence)
+    {
+        $booking = $this->find($reference);
+        $pdf = $evidence->pdf($booking);
+        AdminAuditLog::record($request->user(), 'evidence.download', $booking, null, ['bytes' => strlen($pdf)]);
+        $booking->log('evidence', 'Evidence packet downloaded.', $request->user()->id);
+        return response($pdf, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="ByaheGo-evidence-'.$booking->reference.'.pdf"',
+            'Cache-Control' => 'private, no-store',
+        ]);
+    }
+
+    /** An admin has looked into a "possible theft" flag and is clearing it (the renter's hold is lifted separately on the Users page). */
+    public function clearFlag(Request $request, string $reference)
+    {
+        $data = $request->validate(['note' => ['required', 'string', 'min:5', 'max:300']]);
+        $booking = $this->find($reference);
+        $booking->update(['admin_flag' => null, 'admin_flag_note' => null, 'flagged_at' => null]);
+        $booking->log('flag', 'Admin cleared the flag: '.$data['note'], $request->user()->id);
+        AdminAuditLog::record($request->user(), 'booking.clear_flag', $booking, $data['note']);
+        return response()->json(Present::booking($booking->fresh(), 'admin'));
     }
 
     public function show(string $reference)

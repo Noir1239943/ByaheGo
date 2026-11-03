@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
 import { mediaService } from '@/services/media'
 
 /** Loads a private document (license, OR/CR) with the signed-in user's token. */
-export function ProtectedImage({ id, alt, className, onOpen }: { id: number | null | undefined; alt: string; className?: string; onOpen?: (url: string) => void }) {
+export function ProtectedImage({ id, alt, className, onOpen, width }: { id: number | null | undefined; alt: string; className?: string; onOpen?: (url: string) => void; /** Ask for a smaller copy (for grids). */ width?: number }) {
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   useEffect(() => {
@@ -13,7 +13,7 @@ export function ProtectedImage({ id, alt, className, onOpen }: { id: number | nu
     let objectUrl: string | null = null
     let cancelled = false
     mediaService
-      .objectUrl(id)
+      .objectUrl(id, width)
       .then((u) => {
         objectUrl = u
         if (!cancelled) setUrl(u)
@@ -23,7 +23,7 @@ export function ProtectedImage({ id, alt, className, onOpen }: { id: number | nu
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [id])
+  }, [id, width])
   if (!id || failed) {
     return (
       <div className={cn('flex flex-col items-center justify-center gap-1 rounded-xl bg-line-100 text-xs text-ink-500', className)}>

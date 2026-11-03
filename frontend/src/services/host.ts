@@ -37,4 +37,9 @@ export const hostService = {
   pickup: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/pickup`, body).then((r) => r.data),
   return: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/return`, body).then((r) => r.data),
   incident: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/incidents`, body).then((r) => r.data),
+  confirmCheckin: (reference: string, notes?: string) => api.post<Booking>(`/host/bookings/${reference}/checkin/confirm`, { notes }).then((r) => r.data),
+  /** After the renter's return photos: accept (trip completes, deposit settled) or report an issue with pins. */
+  reviewReturn: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/return/review`, body).then((r) => r.data),
+  respondExtension: (reference: string, id: number, approve: boolean) => api.post<Booking>(`/host/bookings/${reference}/extensions/${id}`, { approve }).then((r) => r.data),
+  notReturned: (reference: string) => api.post<Booking>(`/host/bookings/${reference}/not-returned`).then((r) => r.data),
 }

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Incident;
 use App\Services\BookingService;
+use App\Services\TripService;
 use App\Support\Notifier;
 use App\Support\Present;
 use Illuminate\Http\Request;
@@ -13,7 +14,7 @@ use Illuminate\Validation\Rule;
 
 class HostBookingController extends Controller
 {
-    public function __construct(protected BookingService $bookings) {}
+    public function __construct(protected BookingService $bookings, protected TripService $trips) {}
 
     protected function own(Request $request, string $reference): Booking
     {
@@ -70,6 +71,64 @@ class HostBookingController extends Controller
         $data = $request->validate(['reason' => ['required', 'string', 'min:5', 'max:200']], ['reason.required' => 'Tell the renter why you are cancelling.']);
         $booking = $this->bookings->cancel($this->own($request, $reference), 'host', $data['reason'], $request->user());
         return response()->json(Present::booking($booking, 'host'));
+    }
+
+    /** The host agrees with the renter's check-in photos (optionally with a note). No answer inside the window counts as agreement. */
+    public function confirmCheckin(Request $request, string $reference)
+    {
+        $data = $request->validate(['notes' => ['nullable', 'string', 'max:500']]);
+        $booking = $this->own($request, $reference);
+        $this->trips->hostConfirmCheckin($booking, $request->user(), $data['notes'] ?? null);
+        return response()->json(Present::booking($booking->fresh(), 'host'));
+    }
+
+    /** The host adds their own photo to the check-in (added only, never replaced). */
+    public function addCheckinPhoto(Request $request, string $reference)
+    {
+        $data = $request->validate([
+            'file' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:8192'],
+            'live' => ['nullable', 'boolean'], 'device_time' => ['nullable', 'date'],
+            'lat' => ['nullable', 'numeric', 'between:-90,90'], 'lng' => ['nullable', 'numeric', 'between:-180,180'],
+            'note' => ['nullable', 'string', 'max:255'],
+        ]);
+        $booking = $this->own($request, $reference);
+        $this->trips->storePhoto($booking, $request->user(), 'checkin', $request->file('file'), $data + ['angle' => 'host_extra']);
+        return response()->json(Present::booking($booking->fresh(), 'host'), 201);
+    }
+
+    /** After the renter's return photos: "all good" completes the trip, "issue" opens a dispute with pins and keeps the deposit. */
+    public function reviewReturn(Request $request, string $reference)
+    {
+        $data = $request->validate([
+            'decision' => ['required', Rule::in(['accept', 'issue'])],
+            'type' => ['required_if:decision,issue', 'nullable', Rule::in(['damage', 'missing_parts', 'theft', 'other'])],
+            'description' => ['required_if:decision,issue', 'nullable', 'string', 'min:10', 'max:2000'],
+            'amount' => ['nullable', 'integer', 'min:0', 'max:5000000'],
+            'pins' => ['nullable', 'array', 'max:20'],
+            'pins.*.angle' => ['required', 'string', 'max:20'],
+            'pins.*.x' => ['required', 'numeric', 'between:0,1'],
+            'pins.*.y' => ['required', 'numeric', 'between:0,1'],
+            'pins.*.note' => ['nullable', 'string', 'max:200'],
+        ], ['description.required_if' => 'Describe what is wrong, so the admin can decide.']);
+        $booking = $this->own($request, $reference);
+        $booking = $data['decision'] === 'accept'
+            ? $this->trips->acceptReturn($booking, $request->user())
+            : $this->trips->reportReturnIssue($booking, $request->user(), $data);
+        return response()->json(Present::booking($booking, 'host'));
+    }
+
+    public function respondExtension(Request $request, string $reference, int $id)
+    {
+        $data = $request->validate(['approve' => ['required', 'boolean'], 'note' => ['nullable', 'string', 'max:255']]);
+        $booking = $this->own($request, $reference);
+        $this->trips->respondExtension($booking, $request->user(), $booking->extensions()->findOrFail($id), (bool) $data['approve'], $data['note'] ?? null);
+        return response()->json(Present::booking($booking->fresh(), 'host'));
+    }
+
+    /** "Car not returned": flags a possible theft and puts the renter on hold. Only after the trip is badly overdue. */
+    public function notReturned(Request $request, string $reference)
+    {
+        return response()->json(Present::booking($this->trips->reportNotReturned($this->own($request, $reference), $request->user()), 'host'));
     }
 
     public function pickup(Request $request, string $reference)

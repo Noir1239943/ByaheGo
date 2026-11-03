@@ -8,7 +8,7 @@ export function PoliciesBlock({ v }: { v: VehicleDetail }) {
   const p = v.policies
   const items = [
     { icon: Ban, title: 'Free cancellation until a day before', text: `Cancel up to ${p.cancellation_cutoff_hours} hours before pick-up and get a full refund – rental and deposit – to your original payment method.` },
-    { icon: Clock, title: 'Late returns', text: `You have a ${p.late_grace_minutes}-minute grace period. After that, it's ${peso(v.late_fee_per_hour)} per hour late (never more than ${p.late_fee_daily_cap}× the daily rate per day), taken from your deposit.` },
+    { icon: Clock, title: 'Late returns', text: `Late return: ${peso(v.late_terms.per_hour)} per hour after a ${v.late_terms.grace_minutes}-minute grace period. ${v.late_terms.full_day_after_hours}+ hours late counts as one extra full day (${peso(v.late_terms.daily_rate)}). It is counted when you submit the return photos and taken from your deposit. Ask the host for more time before the return time to avoid it.` },
     { icon: Wallet, title: `${peso(v.security_deposit)} refundable deposit`, text: `Held when you book and returned within ${p.deposit_release_days} days after the vehicle is checked at return.` },
     { icon: ShieldCheck, title: 'Accidental damage', text: 'Your protection plan limits what you pay if the vehicle is damaged by accident. Pick-up and return photos are recorded so nobody is blamed for old scratches.' },
     { icon: ShieldAlert, title: 'Theft, missing parts and negligence', text: 'Not covered by protection plans. If the vehicle or its parts (battery, tires, accessories) go missing during your trip, you\'re fully liable, and the case is reported to the PNP.' },

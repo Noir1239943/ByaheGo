@@ -90,7 +90,10 @@ export const router = createBrowserRouter([
           },
           {
             element: <FocusLayout />,
-            children: [{ path: 'verify', lazy: page(() => import('@/pages/verification/VerifyPage')), handle: { title: 'Verify your identity' } }],
+            children: [
+              { path: 'verify', lazy: page(() => import('@/pages/verification/VerifyPage')), handle: { title: 'Verify your identity' } },
+              { path: 'trips/:reference/inspect/:stage', lazy: page(() => import('@/pages/account/InspectionPage')), handle: { title: 'Trip photos' } },
+            ],
           },
           {
             element: <PrintLayout />,

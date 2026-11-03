@@ -103,7 +103,7 @@ cp .env.example .env                    # VITE_API_URL=http://localhost:8000
 npm run dev                             # http://localhost:5173
 ```
 
-Tests: `cd backend && php artisan test` (108 feature tests, run on an in-memory SQLite database so they never touch Neon, with Xendit faked: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, the rental agreement, Xendit checkout, webhooks, refunds and invoices, 24-hour cancellation rule, late fees, damage/theft disputes, suspensions, settings).
+Tests: `cd backend && php artisan test` (125 feature tests, run on an in-memory SQLite database so they never touch Neon, with Xendit faked: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, the rental agreement, Xendit checkout, webhooks, refunds and invoices, 24-hour cancellation rule, guided check-in/out photos, excess hours, extensions, the "car not returned" report, the evidence packet, damage/theft disputes, suspensions, settings).
 
 ---
 
@@ -184,6 +184,25 @@ Checkout uses **Xendit's hosted payment page** (Payment Sessions). Card and wall
 2. In the Xendit dashboard's webhook settings, set the URL for the payment-session and refund notifications to `https://<your-api>.onrender.com/api/webhooks/xendit`. The endpoint answers `401` if the token is wrong and `200` otherwise; it reacts to any event whose name starts with `payment_session` or `refund`, and ignores the rest.
 3. The container starts `php artisan schedule:work` (see `docker/start.sh`), which runs `payments:sync` every 5 minutes, `bookings:expire-pending` every minute and `deposits:release-due` hourly. The free Render plan sleeps, so these pause while it sleeps; every payment and refund is also re-checked whenever someone opens it.
 4. To accept real money, switch the key to the live secret key (`xnd_production_...`) once Xendit has activated your account and the channels (GCash, Maya, cards...) you want.
+
+---
+
+## The trip: photos, excess hours and safety
+
+**Guided check-in and return photos.** Before pick-up (the window opens 12 hours before) the renter opens the trip page → *Start check-in*. The phone's rear camera walks them through 10 shots, one per screen, with an outline guide: front, rear, driver side, passenger side, dashboard and front seats, back seats, trunk with spare tire and tools, engine bay (hood open), odometer, fuel gauge. They type the odometer and fuel level (E ¼ ½ ¾ F) and can add damage close-ups with a note. **The host can only start the handover after this is submitted.** At return the same 10 shots are taken again, with the matching check-in photo shown faintly over the camera so the angles line up.
+- Each photo is shrunk to about 1600 px (JPEG 0.8) and stamped with the date, time and booking reference **inside the image** (canvas). The server stores the angle, stage (check-in/out), who took it, **live camera or "uploaded, not live"**, the phone's clock, the server time, GPS (only if allowed) and a SHA-256 fingerprint.
+- Photos are **private**: only that booking's renter and host and admins can open them (`GET /api/media/{id}`, grids ask for a small copy with `?w=480`). Once submitted they can't be edited or removed; only extra photos can be added (renter damage close-ups, host photos).
+- **Host side:** a check-in review (confirm the condition, add their own photos or a note inside the review window, default 12 h, otherwise it is accepted automatically). After the return photos the host gets a **compare screen**: before/after slider, tap-to-zoom, kilometres driven, fuel difference, and tap-to-pin new damage. **All good** completes the trip and settles the deposit; **Report an issue** opens a dispute with both photo sets, pins, readings and timestamps and keeps the deposit held. No answer within the review window (default 24 h) completes the trip automatically. There is no AI damage detection and nothing is charged automatically: a person decides.
+
+**Excess hours.** Each listing sets its grace period and per-hour rate (platform defaults: 30 min). The hours are counted from the **server time the renter submits the return photos** against the scheduled return time. Within a day it is the per-hour rate; once the lateness in the last partial day reaches the threshold (default **5 hours**) it counts as one extra full day. Capped at `late_fee_daily_cap` × the daily rate per day. The breakdown shows to the renter, host and admin, the terms show on the listing and at checkout, and the fee is **taken from the deposit first**; anything above the deposit becomes a balance the renter pays through the normal Xendit checkout, with an invoice.
+
+**Extensions.** While the trip runs, before the return time, the renter can ask for a later return (up to 7 days at a time, only if the car is free). If the host approves, the return time changes and no excess fee applies until then. An hour before the return time the renter gets one reminder. *(The extra rental time is not charged automatically yet; hosts can decline.)*
+
+**Theft and missing parts.** The renter can report *car stolen while renting* with photos and a location (urgent alert to the host and admins). When a trip is overdue by `theft_overdue_hours` (default 3) with no approved extension and no return photos, the host gets **Car not returned**: the booking is flagged *Possible theft*, the renter is put on hold (by notification and email) and admins are alerted. Missing parts are handled through the host's *Report an issue* with pins; the admin resolves the dispute with a deposit deduction and/or an amount due. **Admins can download an evidence packet PDF** for the police or an insurer (verified identity and license photos, signed contract, booking and payment records, every check-in/out photo with metadata, incident timeline, contacts). Every download is logged in the audit log.
+
+**Scheduled work.** `php artisan trips:sweep` (every 10 minutes, started by `docker/start.sh`) sends the return reminders, accepts unanswered check-ins and completes unreviewed returns.
+
+**Do uploaded files survive redeploys?** Yes: every photo (license, vehicle, check-in/out) is stored **inside the Postgres database** as base64, not on the web server's disk, so Render redeploys never lose them. The limit is Neon's storage: a trip's 20+ photos are about 6–10 MB. See the next section.
 
 ---
 

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router'
-import { AlertTriangle, ArrowLeft, BadgeCheck, CalendarDays, ClipboardCheck, Download, KeyRound, MapPin, Phone, Undo2, XCircle } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, BadgeCheck, CalendarDays, Camera, CheckCircle2, ClipboardCheck, Clock, Download, KeyRound, MapPin, Phone, Siren, Undo2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { InfoRow, KeyValue } from '@/components/common/InfoRow'
 import { ErrorState, PageLoader } from '@/components/common/States'
@@ -18,6 +18,12 @@ import { downloadFile } from '@/lib/download'
 import { INSPECTION_ITEMS } from '@/lib/constants'
 import { formatDate, formatDateTime, localToIso, peso, toLocalInput } from '@/lib/format'
 import { hostService } from '@/services/host'
+import { tripService } from '@/services/trip'
+import { GuidedCamera } from '@/components/features/trip/GuidedCamera'
+import { PhotoCompare } from '@/components/features/trip/PhotoCompare'
+import { HostStatusLine, TripPhotos } from '@/components/features/trip/TripPhotos'
+import { watermarkText } from '@/lib/trip/capture'
+import type { DamagePin } from '@/types'
 
 type InspectionForm = { odometer: string; fuel_level: string; checklist: Record<string, boolean>; notes: string; actual_return_at: string; damage_reported: boolean; damage_type: string; damage_description: string; damage_amount: string }
 
@@ -25,7 +31,7 @@ export function HostBookingDetailSection() {
   const { reference = '' } = useParams()
   const qc = useQueryClient()
   const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['host', 'booking', reference], queryFn: () => hostService.booking(reference) })
-  const [modal, setModal] = useState<null | 'pickup' | 'return' | 'incident' | 'cancel'>(null)
+  const [modal, setModal] = useState<null | 'pickup' | 'return' | 'incident' | 'cancel' | 'review' | 'issue' | 'photo' | 'notreturned' | 'confirm'>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const blank = (): InspectionForm => ({
     odometer: '', fuel_level: '100', checklist: Object.fromEntries(INSPECTION_ITEMS.map((i) => [i.key, true])), notes: '',
@@ -34,6 +40,9 @@ export function HostBookingDetailSection() {
   const [form, setForm] = useState<InspectionForm>(blank)
   const [incident, setIncident] = useState({ type: 'damage', description: '', amount_claimed: '' })
   const [cancelReason, setCancelReason] = useState('')
+  const [pins, setPins] = useState<DamagePin[]>([])
+  const [issue, setIssue] = useState({ type: 'damage', description: '', amount: '' })
+  const [confirmNote, setConfirmNote] = useState('')
 
   const done = (msg: string) => {
     toast.success(msg)
@@ -51,6 +60,24 @@ export function HostBookingDetailSection() {
     onSuccess: (r) => done(r.deposit_status === 'on_hold' ? 'Return recorded. Your damage report is with our team.' : r.late_fee > 0 ? `Return recorded. Late fee of ${peso(r.late_fee)} added to your payout.` : 'Return recorded. Your payout is scheduled.'),
     onError: onErr,
   })
+  const confirmCheckin = useMutation({ mutationFn: () => hostService.confirmCheckin(reference, confirmNote || undefined), onSuccess: () => done('Thanks! The condition at check-in is confirmed.'), onError: onErr })
+  const addPhoto = useMutation({
+    mutationFn: ({ blob, meta }: { blob: Blob; meta: { live: boolean; device_time: string; lat: number | null; lng: number | null } }) => tripService.hostAddPhoto(reference, blob, meta),
+    onSuccess: () => done('Your photo was added to the check-in.'),
+    onError: onErr,
+  })
+  const acceptReturn = useMutation({
+    mutationFn: () => hostService.reviewReturn(reference, { decision: 'accept' }),
+    onSuccess: (r) => done(r.late_fee > 0 ? `Trip completed. Excess-hours fee of ${peso(r.late_fee)} added to your payout.` : 'Trip completed. The deposit goes back to the renter and your payout is scheduled.'),
+    onError: onErr,
+  })
+  const reportIssue = useMutation({
+    mutationFn: () => hostService.reviewReturn(reference, { decision: 'issue', type: issue.type, description: issue.description, amount: issue.amount ? Number(issue.amount) : 0, pins }),
+    onSuccess: () => { setPins([]); done('Issue reported. The deposit stays held while our team reviews the photos and your pins.') },
+    onError: onErr,
+  })
+  const answerExtension = useMutation({ mutationFn: ({ id, approve }: { id: number; approve: boolean }) => hostService.respondExtension(reference, id, approve), onSuccess: (r) => done(r.trip.extension?.status === 'approved' ? 'Extension approved. The return time was updated.' : 'Extension declined.'), onError: onErr })
+  const notReturned = useMutation({ mutationFn: () => hostService.notReturned(reference), onSuccess: () => done('Reported. The renter is on hold and our team has been alerted.'), onError: onErr })
   const cancelTrip = useMutation({ mutationFn: () => hostService.cancelBooking(reference, cancelReason), onSuccess: () => done('Booking cancelled. The renter gets a full refund.'), onError: onErr })
   const report = useMutation({ mutationFn: () => hostService.incident(reference, { ...incident, amount_claimed: incident.amount_claimed ? Number(incident.amount_claimed) : 0 }), onSuccess: () => done('Report sent to our team.'), onError: onErr })
 
@@ -103,8 +130,9 @@ export function HostBookingDetailSection() {
             <p className="text-sm text-ink-500">{formatDateTime(b.pickup_at)} → {formatDateTime(b.return_at)} · {b.days} day(s)</p>
           </div>
           <div className="flex flex-wrap gap-2 sm:flex-col">
-            {b.status === 'confirmed' && <Button icon={<KeyRound className="size-4" />} onClick={() => { setForm(blank()); setModal('pickup') }}>Start handover</Button>}
-            {b.status === 'active' && <Button icon={<Undo2 className="size-4" />} onClick={() => { setForm(blank()); setModal('return') }}>Record return</Button>}
+            {b.status === 'confirmed' && <Button icon={<KeyRound className="size-4" />} disabled={!b.trip.checkin} title={b.trip.checkin ? undefined : 'The renter must submit the check-in photos first'} onClick={() => { setForm(blank()); setModal('pickup') }}>Start handover</Button>}
+            {b.status === 'active' && b.trip.checkout && <Button icon={<CheckCircle2 className="size-4" />} onClick={() => setModal('review')}>Review the return</Button>}
+            {b.status === 'active' && !b.trip.checkout && <Button variant="secondary" icon={<Undo2 className="size-4" />} onClick={() => { setForm(blank()); setModal('return') }}>Record return by hand</Button>}
             {['active', 'completed'].includes(b.status) && <Button variant="secondary" icon={<AlertTriangle className="size-4" />} onClick={() => setModal('incident')}>Report incident</Button>}
             {b.agreement.has_copy && <Button variant="secondary" icon={<Download className="size-4" />} onClick={() => void downloadFile(`/host/bookings/${b.reference}/agreement.pdf`, `ByaheGo-agreement-${b.reference}.pdf`).catch((e) => toast.error(getErrorMessage(e)))}>Agreement PDF</Button>}
             {['confirmed', 'active'].includes(b.status) && <Button variant="danger-outline" icon={<XCircle className="size-4" />} onClick={() => { setCancelReason(''); setModal('cancel') }}>Cancel booking</Button>}
@@ -112,7 +140,26 @@ export function HostBookingDetailSection() {
         </div>
         <div className="border-t border-line-100 bg-page/50 p-5 sm:p-6"><TripTimeline b={b} /></div>
       </Card>
-      {s === 'overdue' && <Alert tone="danger" title="Return is overdue">Call the renter. Hourly late fees are added automatically when you record the return. If you can't reach them, report it as an incident.</Alert>}
+      {s === 'overdue' && <Alert tone="danger" title={`Return is overdue by ${b.trip.overdue_hours} hour(s)`} action={b.trip.can_report_not_returned ? <Button size="sm" variant="danger" icon={<Siren className="size-4" />} onClick={() => setModal('notreturned')}>Car not returned</Button> : undefined}>
+        Call the renter. Excess-hours fees are added automatically when the renter submits the return photos.{!b.trip.can_report_not_returned && ` If the car still isn't back ${b.trip.not_returned_after_hours} hours after the return time (and you haven't approved an extension), you can report "Car not returned" here.`}
+      </Alert>}
+      {b.status === 'confirmed' && !b.trip.checkin && <Alert tone="info" icon={<Camera />} title="Waiting for the renter's check-in photos">The renter photographs the car in the app just before pick-up. You can start the handover once they are in.</Alert>}
+      {b.trip.checkin?.host_status === 'pending' && ['confirmed', 'active'].includes(b.status) && (
+        <Alert tone="brand" icon={<Camera />} title="Check the check-in photos" action={<div className="flex flex-wrap gap-2"><Button size="sm" onClick={() => { setConfirmNote(''); setModal('confirm') }}>Confirm condition</Button><Button size="sm" variant="secondary" onClick={() => setModal('photo')}>Add my photo</Button></div>}>
+          Compare them with the car in front of you. Confirm them, add your own photos or notes{b.trip.checkin.host_window_ends_at ? ` before ${formatDateTime(b.trip.checkin.host_window_ends_at)}` : ''}; if you say nothing, they are accepted automatically.
+        </Alert>
+      )}
+      {b.status === 'active' && b.trip.checkout && (
+        <Alert tone="warning" icon={<CheckCircle2 />} title="The renter returned the car" action={<Button size="sm" onClick={() => setModal('review')}>Review the return</Button>}>
+          Compare the before and after photos{b.trip.host_review_due_at ? `. Decide by ${formatDateTime(b.trip.host_review_due_at)}, or the trip completes automatically and the deposit is released` : ''}.
+          {b.trip.late.fee > 0 && ` Excess hours: ${b.trip.late.hours} h = ${peso(b.trip.late.fee)} (added to your payout, taken from the renter's deposit).`}
+        </Alert>
+      )}
+      {b.trip.extension?.status === 'pending' && b.status === 'active' && (
+        <Alert tone="info" icon={<Clock />} title="The renter asks for more time" action={<div className="flex gap-2"><Button size="sm" loading={answerExtension.isPending} onClick={() => answerExtension.mutate({ id: b.trip.extension!.id, approve: true })}>Approve</Button><Button size="sm" variant="secondary" loading={answerExtension.isPending} onClick={() => answerExtension.mutate({ id: b.trip.extension!.id, approve: false })}>Decline</Button></div>}>
+          New return time: <b>{formatDateTime(b.trip.extension.requested_return_at)}</b> (now {formatDateTime(b.trip.extension.previous_return_at)}).{b.trip.extension.note ? ` “${b.trip.extension.note}”` : ''} If you approve, no excess-hours fee applies until then.
+        </Alert>
+      )}
 
       <div className="grid gap-5 xl:grid-cols-[1fr_340px]">
         <div className="space-y-5">
@@ -139,7 +186,11 @@ export function HostBookingDetailSection() {
             </CardBody>
           </Card>
           <Card>
-            <CardHeader title="Condition records" description="Pick-up and return checklists" />
+            <CardHeader title="Check-in and return photos" description="Taken by the renter with the live camera. They can't be edited after they are submitted." />
+            <CardBody className="space-y-3"><TripPhotos trip={b.trip} /><HostStatusLine inspection={b.trip.checkin} /></CardBody>
+          </Card>
+          <Card>
+            <CardHeader title="Handover records" description="Your own pick-up and return checklists" />
             <CardBody><InspectionsList inspections={b.inspections} /></CardBody>
           </Card>
           {b.incidents.length > 0 && <Card><CardHeader title="Incidents" /><CardBody><IncidentsList incidents={b.incidents} /></CardBody></Card>}
@@ -161,6 +212,42 @@ export function HostBookingDetailSection() {
         </aside>
       </div>
 
+      <Modal open={modal === 'confirm'} onClose={() => setModal(null)} title="Confirm the condition" description="You agree the car matches the renter's check-in photos and readings." size="sm" footer={<Button loading={confirmCheckin.isPending} onClick={() => confirmCheckin.mutate()}>Confirm</Button>}>
+        <Textarea label="Note (optional)" rows={3} value={confirmNote} onChange={(e) => setConfirmNote(e.target.value)} placeholder="e.g. The scratch on the rear bumper was already there" />
+      </Modal>
+      <Modal open={modal === 'photo'} onClose={() => setModal(null)} title="Add your own photo" description="It is added next to the renter's photos. Existing photos are never replaced." size="lg">
+        {modal === 'photo' && <GuidedCamera angle="front" label="Your photo" stamp={(l) => watermarkText(b.reference, l)} busy={addPhoto.isPending} onCapture={(blob, meta) => addPhoto.mutate({ blob, meta })} hint="Show anything you want on record: a scratch, the mileage, the fuel gauge." />}
+      </Modal>
+      <Modal open={modal === 'review'} onClose={() => setModal(null)} title="Review the return" description="Slide to compare before and after. Tap “Mark new damage” and then the photo to pin it. No AI and no automatic charges: you and our team decide." size="xl" footer={<><Button variant="secondary" onClick={() => setModal('issue')}>Report an issue</Button><Button loading={acceptReturn.isPending} onClick={() => acceptReturn.mutate()} data-testid="accept-return">All good, complete the trip</Button></>}>
+        <PhotoCompare trip={b.trip} pins={pins} onPin={(p) => setPins([...pins, p])} onRemovePin={(i) => setPins(pins.filter((_, k) => k !== i))} />
+        {b.trip.checkout?.notes && <p className="mt-3 rounded-lg bg-page p-2.5 text-xs text-ink-700">Renter's note: “{b.trip.checkout.notes}”</p>}
+      </Modal>
+      <Modal open={modal === 'issue'} onClose={() => setModal('review')} title="Report an issue" description="This opens a case with both photo sets, your pins, the readings and the timestamps. The deposit stays held until our team decides." size="lg" footer={<Button variant="danger" loading={reportIssue.isPending} disabled={issue.description.trim().length < 10} onClick={() => reportIssue.mutate()}>Send to our team</Button>}>
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Select label="What kind of issue?" value={issue.type} onChange={(e) => setIssue({ ...issue, type: e.target.value })} options={[{ value: 'damage', label: 'New damage' }, { value: 'missing_parts', label: 'Missing parts (battery, tires, tools...)' }, { value: 'theft', label: 'Something was stolen' }, { value: 'other', label: 'Other' }]} />
+            <Input label="Estimated cost (optional)" type="number" leftIcon={<span className="text-xs font-bold">₱</span>} value={issue.amount} onChange={(e) => setIssue({ ...issue, amount: e.target.value })} />
+          </div>
+          <Textarea label="What is wrong?" rows={4} value={issue.description} onChange={(e) => setIssue({ ...issue, description: e.target.value })} error={errors.description} placeholder="e.g. New dent on the front bumper and the battery is not the original one." />
+          <div>
+            <p className="mb-1 text-sm font-semibold">Your pins ({pins.length})</p>
+            {pins.length === 0 ? <p className="text-xs text-ink-500">No pins yet. Go back to the photos and tap “Mark new damage”, then the spot on the photo.</p> : (
+              <ul className="space-y-2">
+                {pins.map((p, i) => (
+                  <li key={i} className="flex items-center gap-2"><span className="w-28 shrink-0 text-xs font-semibold capitalize">{p.angle.replace('_', ' ')}</span><Input aria-label={`Note for pin ${i + 1}`} value={p.note ?? ''} placeholder="What is here?" onChange={(e) => setPins(pins.map((x, k) => (k === i ? { ...x, note: e.target.value } : x)))} /></li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </Modal>
+      <Modal open={modal === 'notreturned'} onClose={() => setModal(null)} title="Report: car not returned" description="Use this only if you cannot reach the renter and the car is not back." size="sm" footer={<Button variant="danger" loading={notReturned.isPending} onClick={() => notReturned.mutate()}>Report as possible theft</Button>}>
+        <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink-700">
+          <li>The booking is flagged <b>Possible theft</b> and our admins are alerted right away.</li>
+          <li>The renter is put on hold and told by notification and email.</li>
+          <li>If you are in danger, or the car was stolen, call the PNP (911) first.</li>
+        </ul>
+      </Modal>
       <Modal open={modal === 'pickup'} onClose={() => setModal(null)} title="Start handover" description="Walk around the vehicle with the renter. Take photos of every side, then record what you see." size="lg" footer={<Button loading={pickup.isPending} disabled={!form.odometer} onClick={() => pickup.mutate()}>Confirm pick-up</Button>}>
         {inspectionFields('pickup')}
       </Modal>

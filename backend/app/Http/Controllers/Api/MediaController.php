@@ -62,6 +62,20 @@ class MediaController extends Controller
         return response()->json(['id' => $media->id, 'url' => $media->url(), 'width' => $media->width, 'height' => $media->height], 201);
     }
 
+    protected function resize(string $bytes, int $width): ?string
+    {
+        $src = @imagecreatefromstring($bytes);
+        if (! $src) return null;
+        $dst = imagescale($src, $width);
+        if (! $dst) { imagedestroy($src); return null; }
+        ob_start();
+        imagejpeg($dst, null, 75);
+        $out = (string) ob_get_clean();
+        imagedestroy($src);
+        imagedestroy($dst);
+        return $out;
+    }
+
     protected function reject(string $message)
     {
         return response()->json(['message' => $message, 'errors' => ['file' => [$message]]], 422);
@@ -73,14 +87,26 @@ class MediaController extends Controller
         if ($media->visibility !== 'public') {
             $user = Auth::guard('sanctum')->user();
             $allowed = $user && ($user->isAdmin() || $user->id === $media->user_id);
+            // Check-in and check-out photos belong to the booking: its renter and host can see them (admins already can).
+            if (! $allowed && $user && $media->purpose === 'inspection') {
+                $allowed = \App\Models\InspectionPhoto::where('media_id', $id)->whereHas('booking', fn ($b) => $b->where('renter_id', $user->id)->orWhere('host_id', $user->id))->exists();
+            }
             if (! $allowed && $user && in_array($media->purpose, ['vehicle_or', 'vehicle_cr', 'vehicle_ctpl'], true)) {
                 $allowed = Vehicle::where('host_id', $user->id)->where(fn ($q) => $q->where('or_media_id', $id)->orWhere('cr_media_id', $id)->orWhere('ctpl_media_id', $id))->exists();
             }
             if (! $allowed) abort(404);
         }
-        return response(base64_decode($media->data), 200, [
-            'Content-Type' => $media->mime,
-            'Cache-Control' => $media->visibility === 'public' ? 'public, max-age=604800, immutable' : 'private, no-store',
+        $bytes = base64_decode($media->data);
+        $mime = $media->mime;
+        // ?w=480 returns a small JPEG copy for grids, so a page of ten photos doesn't download ten full-size originals.
+        $w = (int) $request->query('w');
+        if ($w >= 120 && $w <= 1200 && $media->width > $w && ($thumb = $this->resize($bytes, $w))) {
+            [$bytes, $mime] = [$thumb, 'image/jpeg'];
+        }
+        return response($bytes, 200, [
+            'Content-Type' => $mime,
+            // Check-in and check-out photos never change once submitted, so the browser may keep them for a day.
+            'Cache-Control' => $media->visibility === 'public' ? 'public, max-age=604800, immutable' : ($media->purpose === 'inspection' ? 'private, max-age=86400' : 'private, no-store'),
         ]);
     }
 }

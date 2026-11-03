@@ -24,6 +24,9 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('password-reset', fn (Request $request) => Limit::perMinute(5)->by($request->ip())
             ->response(fn (Request $r, array $headers) => $this->tooMany('Too many requests', $headers, 'email')));
 
+        // Guided photos come in tens at a time, so they get their own counter (a shared one would block the Submit button).
+        RateLimiter::for('trip-photos', fn (Request $request) => Limit::perMinute(60)->by('trip-photos|'.($request->user()?->id ?? $request->ip())));
+
         // Password reset emails link to the website, not the API.
         ResetPassword::createUrlUsing(fn ($user, string $token) => rtrim(config('app.frontend_url'), '/').'/reset-password?'.http_build_query(['token' => $token, 'email' => $user->getEmailForPasswordReset()]));
 

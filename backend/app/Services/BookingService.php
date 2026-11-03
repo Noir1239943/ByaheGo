@@ -257,6 +257,9 @@ class BookingService
         if (now()->lessThan($booking->pickup_at->copy()->subHours(12))) {
             throw ValidationException::withMessages(['booking' => 'You can start the handover up to 12 hours before the pick-up time.']);
         }
+        if (! $booking->inspections()->where('stage', 'checkin')->whereNotNull('submitted_at')->exists()) {
+            throw ValidationException::withMessages(['booking' => 'The trip can\'t start until the renter submits the check-in photos in the app.']);
+        }
         return DB::transaction(function () use ($booking, $data, $actor) {
             $booking->inspections()->create([
                 'stage' => 'pickup',
@@ -312,6 +315,7 @@ class BookingService
                     'description' => $data['damage_description'] ?? 'Damage found during return inspection.',
                     'amount_claimed' => (int) ($data['damage_amount'] ?? 0),
                     'photo_ids' => $data['photo_ids'] ?? [],
+                    'pins' => $data['pins'] ?? null,
                 ]);
                 $booking->update(['deposit_status' => 'on_hold']);
                 $booking->log('incident', 'Host reported an issue at return. Deposit stays on hold while our team reviews it.', $actor->id);

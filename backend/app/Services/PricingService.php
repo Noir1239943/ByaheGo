@@ -74,12 +74,18 @@ class PricingService
         // Each listing sets its own grace period; the platform setting is only the fallback.
         $grace = $vehicle->grace_minutes ?? Settings::get('late_grace_minutes');
         if ($minutesLate <= $grace) {
-            return ['hours' => 0, 'fee' => 0];
+            return ['hours' => 0, 'fee' => 0, 'grace_minutes' => (int) $grace, 'per_hour' => (int) $vehicle->late_fee_per_hour, 'full_days' => 0, 'extra_day_applied' => false];
         }
         $hours = (int) ceil($minutesLate / 60);
-        $fee = $hours * $vehicle->late_fee_per_hour;
+        // Whole days late are charged as days. In the last partial day, once the lateness reaches the "full day" threshold
+        // (default 5 hours) it counts as one more full day; before that it is the listing's per-hour rate.
+        $days = intdiv($hours, 24);
+        $rest = $hours % 24;
+        $threshold = (int) Settings::get('excess_hours_full_day');
+        $extraDay = $threshold > 0 && $rest >= $threshold;
+        $fee = $days * $vehicle->daily_rate + ($extraDay ? $vehicle->daily_rate : $rest * $vehicle->late_fee_per_hour);
         $cap = (int) round(ceil($hours / 24) * $vehicle->daily_rate * Settings::get('late_fee_daily_cap'));
 
-        return ['hours' => $hours, 'fee' => min($fee, $cap)];
+        return ['hours' => $hours, 'fee' => min($fee, $cap), 'grace_minutes' => (int) $grace, 'per_hour' => (int) $vehicle->late_fee_per_hour, 'full_days' => $days + ($extraDay ? 1 : 0), 'extra_day_applied' => $extraDay];
     }
 }

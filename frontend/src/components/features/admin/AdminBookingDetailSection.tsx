@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router'
-import { ArrowLeft, BadgeCheck, CalendarDays, Download, Mail, MapPin, MessageSquare, Phone, Receipt, RotateCcw, XCircle } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, CalendarDays, Download, Mail, MapPin, MessageSquare, Phone, Receipt, RotateCcw, ShieldAlert, Siren, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { InfoRow, KeyValue } from '@/components/common/InfoRow'
 import { ErrorState, PageLoader } from '@/components/common/States'
@@ -11,6 +11,8 @@ import { VehicleImage } from '@/components/common/VehicleImage'
 import { DepositCard } from '@/components/features/bookings/DepositCard'
 import { IncidentsList } from '@/components/features/bookings/IncidentsList'
 import { InspectionsList } from '@/components/features/bookings/InspectionsList'
+import { TripPhotos } from '@/components/features/trip/TripPhotos'
+import { PhotoCompare } from '@/components/features/trip/PhotoCompare'
 import { adminInvoicePath, PaymentsList } from '@/components/features/bookings/PaymentsList'
 import { TripTimeline } from '@/components/features/bookings/TripTimeline'
 import { Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, Checkbox, Input, Modal, Select, Textarea } from '@/components/ui'
@@ -41,16 +43,18 @@ export function AdminBookingDetailSection() {
   const { reference = '' } = useParams()
   const qc = useQueryClient()
   const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['admin', 'booking', reference], queryFn: () => adminService.booking(reference) })
-  const [modal, setModal] = useState<null | 'refund' | 'cancel' | 'message'>(null)
+  const [modal, setModal] = useState<null | 'refund' | 'cancel' | 'message' | 'flag'>(null)
   const [refund, setRefund] = useState({ amount: '', reason: '' })
   const [cancel, setCancel] = useState({ reason: '', refund: true })
   const [msg, setMsg] = useState({ to: 'renter' as 'renter' | 'host', message: '' })
   const [note, setNote] = useState('')
+  const [flagNote, setFlagNote] = useState('')
   useEffect(() => setNote(b?.admin_note ?? ''), [b?.admin_note])
 
   const done = (m: string) => { toast.success(m); setModal(null); void qc.invalidateQueries({ queryKey: ['admin'] }) }
   const onErr = (e: unknown) => toast.error(getErrorMessage(e))
   const doRefund = useMutation({ mutationFn: () => adminService.refund(reference, Number(refund.amount), refund.reason), onSuccess: () => done('Refund sent to the renter'), onError: onErr })
+  const clearFlag = useMutation({ mutationFn: () => adminService.clearFlag(reference, flagNote), onSuccess: () => { setFlagNote(''); done('Flag cleared.') }, onError: onErr })
   const doCancel = useMutation({ mutationFn: () => adminService.cancelBooking(reference, cancel.reason, cancel.refund), onSuccess: () => done('Booking cancelled'), onError: onErr })
   const doMsg = useMutation({ mutationFn: () => adminService.message(reference, msg.to, msg.message), onSuccess: () => { done('Message sent'); setMsg({ ...msg, message: '' }) }, onError: onErr })
   const doNote = useMutation({ mutationFn: () => adminService.note(reference, note), onSuccess: () => done('Note saved'), onError: onErr })
@@ -62,7 +66,12 @@ export function AdminBookingDetailSection() {
   return (
     <section className="space-y-5">
       <Link to="/admin/bookings" className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-500 hover:text-ink-900"><ArrowLeft className="size-4" /> Bookings</Link>
-      {b.admin_flag && <Alert tone="warning" title="This trip needs a decision">{b.admin_flag_note} Cancel it (the renter gets a full refund) or leave it as is.</Alert>}
+      {b.admin_flag === 'possible_theft' && (
+        <Alert tone="danger" icon={<Siren />} title="POSSIBLE THEFT: the host reported the car not returned" action={<div className="flex gap-2"><Button size="sm" variant="danger" icon={<Download className="size-4" />} onClick={() => void downloadFile(`/admin/bookings/${b.reference}/evidence.pdf`, `ByaheGo-evidence-${b.reference}.pdf`).catch((e) => toast.error(getErrorMessage(e)))}>Evidence packet</Button><Button size="sm" variant="secondary" onClick={() => setModal('flag')}>Clear flag</Button></div>}>
+          {b.admin_flag_note} The renter is on hold. Contact them and the host, then use the Users page to lift the hold, or download the evidence packet for the police or insurer. Every download is logged.
+        </Alert>
+      )}
+      {b.admin_flag && b.admin_flag !== 'possible_theft' && <Alert tone="warning" title="This trip needs a decision">{b.admin_flag_note} Cancel it (the renter gets a full refund) or leave it as is.</Alert>}
       <Card>
         <div className="flex flex-col gap-5 p-5 lg:flex-row lg:items-center">
           <div className="h-24 w-36 shrink-0 overflow-hidden rounded-2xl"><VehicleImage photo={v.photo} type={v.type} color={v.color_hex} alt={v.name} /></div>
@@ -75,6 +84,7 @@ export function AdminBookingDetailSection() {
             <Button variant="secondary" size="sm" icon={<MessageSquare className="size-4" />} onClick={() => setModal('message')}>Message</Button>
             <Button variant="secondary" size="sm" icon={<RotateCcw className="size-4" />} disabled={!b.refundable} onClick={() => setModal('refund')}>Issue refund</Button>
             <Button variant="secondary" size="sm" icon={<Receipt className="size-4" />} to={`/invoice/${b.reference}`}>Invoice</Button>
+            <Button variant="secondary" size="sm" icon={<ShieldAlert className="size-4" />} onClick={() => void downloadFile(`/admin/bookings/${b.reference}/evidence.pdf`, `ByaheGo-evidence-${b.reference}.pdf`).catch((e) => toast.error(getErrorMessage(e)))}>Evidence packet</Button>
             {b.agreement.has_copy && <Button variant="secondary" size="sm" icon={<Download className="size-4" />} onClick={() => void downloadFile(`/admin/bookings/${b.reference}/agreement.pdf`, `ByaheGo-agreement-${b.reference}.pdf`).catch((e) => toast.error(getErrorMessage(e)))}>Agreement PDF</Button>}
             {['confirmed', 'active'].includes(b.status) && <Button variant="danger-outline" size="sm" icon={<XCircle className="size-4" />} onClick={() => setModal('cancel')}>Cancel booking</Button>}
           </div>
@@ -98,7 +108,9 @@ export function AdminBookingDetailSection() {
             <PersonCard title="Host" u={b.host} />
           </div>
           {b.incidents.length > 0 && <Card><CardHeader title="Incidents" action={<Button size="sm" variant="ghost" to="/admin/disputes">Open disputes</Button>} /><CardBody><IncidentsList incidents={b.incidents} /></CardBody></Card>}
-          <Card><CardHeader title="Condition records" /><CardBody><InspectionsList inspections={b.inspections} /></CardBody></Card>
+          <Card><CardHeader title="Check-in and return photos" description="Immutable once submitted. Each photo records live/uploaded, phone time, server time, GPS and a file fingerprint." /><CardBody className="space-y-4"><TripPhotos trip={b.trip} /></CardBody></Card>
+          {b.trip.checkin && b.trip.checkout && <Card><CardHeader title="Before / after" description={b.trip.late.fee > 0 ? `Excess hours: ${b.trip.late.hours} h = ${peso(b.trip.late.fee)} (${peso(b.trip.late.per_hour)}/h after ${b.trip.late.grace_minutes} min grace${b.trip.late.extra_day_applied ? ', counted as a full extra day' : ''})` : 'Returned on time'} /><CardBody><PhotoCompare trip={b.trip} pins={b.incidents.flatMap((i) => i.pins ?? [])} /></CardBody></Card>}
+          <Card><CardHeader title="Handover records" /><CardBody><InspectionsList inspections={b.inspections} /></CardBody></Card>
           <Card><CardHeader title="Payments & refunds" /><CardBody className="py-2"><PaymentsList payments={b.payments} invoicePath={adminInvoicePath} /></CardBody></Card>
           <Card>
             <CardHeader title="Activity log" />
@@ -152,6 +164,9 @@ export function AdminBookingDetailSection() {
           <Input label="Amount" type="number" leftIcon={<span className="text-xs font-bold">₱</span>} value={refund.amount} onChange={(e) => setRefund({ ...refund, amount: e.target.value })} />
           <Textarea label="Reason (shared with the renter)" rows={2} value={refund.reason} onChange={(e) => setRefund({ ...refund, reason: e.target.value })} placeholder="e.g. Late handover by host" />
         </div>
+      </Modal>
+      <Modal open={modal === 'flag'} onClose={() => setModal(null)} title="Clear the possible-theft flag" description="Say what you found (for example: the renter was reached and the car is safe). This is recorded in the audit log." size="sm" footer={<Button loading={clearFlag.isPending} disabled={flagNote.trim().length < 5} onClick={() => clearFlag.mutate()}>Clear flag</Button>}>
+        <Textarea label="What did you find?" rows={3} value={flagNote} onChange={(e) => setFlagNote(e.target.value)} />
       </Modal>
       <Modal open={modal === 'cancel'} onClose={() => setModal(null)} title="Cancel this booking?" size="sm" footer={<Button variant="danger" loading={doCancel.isPending} disabled={cancel.reason.length < 3} onClick={() => doCancel.mutate()}>Cancel booking</Button>}>
         <div className="space-y-4">

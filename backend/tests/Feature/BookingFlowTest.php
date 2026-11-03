@@ -90,13 +90,16 @@ class BookingFlowTest extends TestCase
         $u = $this->verifiedRenter();
         $ref = $this->book($u, $v)->json('reference');
         $b = Booking::where('reference', $ref)->first();
-        // The trip started two days ago and was due back 3 hours ago.
-        $b->update(['pickup_at' => now()->subDays(2)->subHours(3), 'return_at' => now()->subHours(3)]);
+        // The trip started two days ago and was due back just under 3 hours ago (the photo upload takes a few seconds, so leave some slack).
+        $b->update(['pickup_at' => now()->subDays(2)->subHours(3), 'return_at' => now()->subHours(3)->addMinutes(5)]);
 
         $check = ['exterior' => true, 'interior' => true, 'tires' => true, 'engine_bay' => true];
         $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 12000, 'fuel_level' => 100, 'checklist' => $check])
+            ->assertStatus(422); // no check-in photos yet
+        $this->inspect($u, $ref, 'checkin')->assertCreated();
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 12000, 'fuel_level' => 100, 'checklist' => $check])
             ->assertOk()->assertJsonPath('status', 'active');
-        // Returned now: 3 hours late (grace period is 60 minutes).
+        // Returned now: 3 hours late (grace period is 30 minutes).
         $actual = now()->toIso8601String();
         $this->as($host)->postJson("/api/host/bookings/{$ref}/return", ['odometer' => 1, 'fuel_level' => 90, 'checklist' => $check, 'actual_return_at' => now()->addDay()->toIso8601String()])
             ->assertStatus(422)->assertJsonValidationErrors('actual_return_at');
@@ -122,6 +125,7 @@ class BookingFlowTest extends TestCase
         $ref = $this->book($u, $v)->json('reference');
         Booking::where('reference', $ref)->update(['pickup_at' => now()->subHour(), 'return_at' => now()->addDay()]);
         $check = ['exterior' => true];
+        $this->inspect($u, $ref, 'checkin')->assertCreated();
         $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 100, 'fuel_level' => 100, 'checklist' => $check])->assertOk();
         $this->as($host)->postJson("/api/host/bookings/{$ref}/return", [
             'odometer' => 300, 'fuel_level' => 100, 'checklist' => ['exterior' => false], 'damage_reported' => true,
@@ -154,6 +158,7 @@ class BookingFlowTest extends TestCase
         $u = $this->verifiedRenter();
         $ref = $this->book($u, $v)->json('reference');
         Booking::where('reference', $ref)->update(['pickup_at' => now()->subHour(), 'return_at' => now()->addDay()]);
+        $this->inspect($u, $ref, 'checkin')->assertCreated();
         $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 100, 'fuel_level' => 100, 'checklist' => ['exterior' => true]])->assertOk();
         $this->as($host)->postJson("/api/host/bookings/{$ref}/incidents", ['type' => 'theft', 'description' => 'Renter not answering, car not returned.', 'amount_claimed' => 500000])->assertCreated();
         $id = $this->as($this->admin())->getJson('/api/admin/disputes')->json('data.0.id');

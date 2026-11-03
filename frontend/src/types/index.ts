@@ -113,6 +113,7 @@ export interface VehicleDetail extends VehicleCard {
   delivery_fee: number
   min_days: number
   grace_minutes: number
+  late_terms: { grace_minutes: number; per_hour: number; full_day_after_hours: number; daily_rate: number }
   fuel_policy: 'same_level' | 'full_to_full'
   status: string
   pickup: { type: 'hub' | 'own'; label: string; hub: Hub | null; address: string | null; city: string | null; area: string | null; approximate: boolean }
@@ -215,7 +216,7 @@ export type DisplayStatus = 'pending' | 'upcoming' | 'active' | 'completed' | 'c
 export interface BookingRow {
   id: number
   /** Admin views only: set when the renter or host was blocked and the trip needs a decision. */
-  admin_flag?: 'renter_blocked' | 'host_blocked' | null
+  admin_flag?: 'renter_blocked' | 'host_blocked' | 'possible_theft' | null
   admin_flag_note?: string | null
   reference: string
   status: BookingStatus
@@ -249,6 +250,70 @@ export interface Inspection {
   created_at: string
 }
 
+export type ShotAngle = 'front' | 'rear' | 'driver_side' | 'passenger_side' | 'dashboard' | 'back_seats' | 'trunk' | 'engine' | 'odometer' | 'fuel'
+
+export interface TripPhoto {
+  id: number
+  media_id: number
+  angle: ShotAngle | 'damage' | 'host_extra'
+  label: string
+  live: boolean
+  device_time: string | null
+  server_time: string | null
+  lat: number | null
+  lng: number | null
+  note: string | null
+  sha256: string
+  uploader_role: 'renter' | 'host'
+}
+
+/** A submitted check-in or check-out (the renter's guided photos). */
+export interface TripInspection {
+  id: number
+  stage: 'checkin' | 'checkout'
+  odometer: number
+  fuel_level: number
+  notes: string | null
+  submitted_at: string
+  host_status: 'pending' | 'confirmed' | 'auto_accepted' | null
+  host_notes: string | null
+  host_responded_at: string | null
+  host_window_ends_at: string | null
+  photos: TripPhoto[]
+}
+
+export interface TripExtension {
+  id: number
+  status: 'pending' | 'approved' | 'declined'
+  requested_return_at: string
+  previous_return_at: string
+  note: string | null
+  responded_at: string | null
+}
+
+export interface TripInfo {
+  checkin: TripInspection | null
+  checkout: TripInspection | null
+  can_checkin: boolean
+  checkin_opens_at: string | null
+  can_checkout: boolean
+  checkout_submitted_at: string | null
+  host_review_due_at: string | null
+  late: { hours: number; fee: number; grace_minutes: number; per_hour: number; extra_day_applied: boolean; full_day_after_hours: number; is_overdue: boolean }
+  extension: TripExtension | null
+  can_request_extension: boolean
+  overdue_hours: number
+  can_report_not_returned: boolean
+  not_returned_after_hours: number
+}
+
+export interface DamagePin {
+  angle: string
+  x: number
+  y: number
+  note?: string
+}
+
 export interface BookingIncident {
   id: number
   type: string
@@ -259,6 +324,7 @@ export interface BookingIncident {
   resolution_notes: string | null
   created_at: string
   reporter_role: 'host' | 'renter' | 'admin'
+  pins?: DamagePin[]
 }
 
 export interface Booking extends Omit<BookingRow, 'vehicle' | 'has_open_incident'> {
@@ -296,6 +362,7 @@ export interface Booking extends Omit<BookingRow, 'vehicle' | 'has_open_incident
   inspections: Inspection[]
   incidents: BookingIncident[]
   invoice_no: string
+  trip: TripInfo
   commission?: number
   payout?: { amount: number; status: string; paid_at: string | null; scheduled_for: string | null } | null
   admin_note?: string | null
@@ -457,6 +524,9 @@ export interface Incident {
   status: 'open' | 'resolved' | 'dismissed'
   resolution_notes: string | null
   photo_ids: number[]
+  pins: DamagePin[]
+  lat: number | null
+  lng: number | null
   reporter: UserBrief | null
   reporter_role: 'host' | 'renter' | 'admin'
   created_at: string
