@@ -95,6 +95,17 @@ export function CheckoutSection() {
     retry: false,
   })
 
+  // All hooks live up here, before any early return below. Use `enabled` to hold a query back, never a condition around it.
+  const needsVerification = type === 'self' && user?.verification_status !== 'verified'
+  // The agreement filled in for exactly this trip. Its hash is what the renter signs.
+  const agreement = useQuery({
+    queryKey: ['agreement', vehicleId, pickup, ret, type, plan],
+    queryFn: () => agreementService.preview(vehicleId, { pickup_at: localToIso(pickup), return_at: localToIso(ret), rental_type: type, protection_plan: plan }),
+    enabled: !!pickup && !!ret && !!user && !needsVerification,
+    retry: false,
+    staleTime: 60_000,
+  })
+
   const [driver, setDriver] = useState({ driver_name: user?.name ?? '', driver_phone: user?.phone ?? '', driver_email: user?.email ?? '' })
   const [method, setMethod] = useState<PaymentMethod>('gcash')
   const [pay, setPay] = useState<Record<string, string>>({ wallet_number: user?.phone ?? '' })
@@ -137,20 +148,9 @@ export function CheckoutSection() {
 
   if (!pickup || !ret) return <div className="container-page py-10"><Alert tone="warning" title="Pick your dates first" action={<Button to={`/vehicles/${vehicleId}`}>Back to vehicle</Button>}>Choose pick-up and return times on the vehicle page.</Alert></div>
   if (vehicle.isLoading || quote.isLoading) return <PageLoader label="Getting your trip ready…" />
-  // The agreement filled in for exactly this trip. Its hash is what the renter signs.
-  const needsId = type === 'self' && user?.verification_status !== 'verified'
-  const agreement = useQuery({
-    queryKey: ['agreement', vehicleId, pickup, ret, type, plan],
-    queryFn: () => agreementService.preview(vehicleId, { pickup_at: localToIso(pickup), return_at: localToIso(ret), rental_type: type, protection_plan: plan }),
-    enabled: !!pickup && !!ret && !!user && !needsId,
-    retry: false,
-    staleTime: 60_000,
-  })
-
   if (vehicle.error) return <div className="container-page py-10"><ErrorState error={vehicle.error} /></div>
   const v = vehicle.data!
   const q = quote.data
-  const needsVerification = type === 'self' && user?.verification_status !== 'verified'
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -209,8 +209,8 @@ export function CheckoutSection() {
           <Card className="p-5 sm:p-6">
             <SignAgreement
               agreement={agreement.data}
-              loading={agreement.isLoading || (!agreement.data && !agreement.error && !needsId)}
-              error={agreement.error ? getErrorMessage(agreement.error) : needsId ? 'Verify your driver\'s license first. The agreement is made out in your verified name.' : null}
+              loading={agreement.isLoading || (!agreement.data && !agreement.error && !needsVerification)}
+              error={agreement.error ? getErrorMessage(agreement.error) : needsVerification ? 'Verify your driver\'s license first. The agreement is made out in your verified name.' : null}
               signing={signing}
               onChange={setSigning}
               errors={errors}

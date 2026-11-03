@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react'
 import { createBrowserRouter, Navigate } from 'react-router'
 import { PageLoader } from '@/components/common/States'
+import { RouteError } from '@/components/common/RouteError'
 import AccountLayout from '@/layouts/AccountLayout'
 import AuthLayout from '@/layouts/AuthLayout'
 import CheckoutLayout from '@/layouts/CheckoutLayout'
@@ -18,6 +19,7 @@ const page = (load: () => Promise<{ default: ComponentType }>) => async () => ({
 export const router = createBrowserRouter([
   {
     element: <RootLayout />,
+    errorElement: <RouteError />, // any page that crashes or fails to load shows this instead of the raw error
     hydrateFallbackElement: <PageLoader />,
     children: [
       {
