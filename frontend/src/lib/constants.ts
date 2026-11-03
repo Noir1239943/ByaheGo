@@ -63,6 +63,7 @@ export const SUPPORT_PHONE = '(032) 888 2924'
 export const PAYMENT_TYPE_LABEL: Record<string, string> = {
   charge: 'Payment',
   balance: 'Balance payment',
+  extension: 'Extra time (extension)',
   refund: 'Refund',
   late_fee: 'Late return fee',
   damage: 'Damage charge',

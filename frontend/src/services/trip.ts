@@ -46,6 +46,9 @@ export const tripService = {
   deletePhoto: (reference: string, stage: TripStage, id: number) => api.delete(`/bookings/${reference}/inspection/${stage}/photos/${id}`),
   submit: (reference: string, stage: TripStage, body: { odometer: number; fuel_level: number; notes?: string }) =>
     api.post<Booking>(`/bookings/${reference}/inspection/${stage}`, body).then((r) => r.data),
+  /** Opens (or reopens) the Xendit page for an extension the host approved. `checkout_url` is null when it is already paid. */
+  payExtension: (reference: string, payment_method?: string) =>
+    api.post<{ checkout_url: string | null; booking: Booking }>(`/bookings/${reference}/extension/pay`, { payment_method }).then((r) => r.data),
   requestExtension: (reference: string, body: { return_at: string; note?: string }) => api.post<Booking>(`/bookings/${reference}/extension`, body).then((r) => r.data),
   /** The host adds their own photo to the renter's check-in. */
   hostAddPhoto: (reference: string, blob: Blob, meta: Omit<PhotoMeta, 'angle'>) =>

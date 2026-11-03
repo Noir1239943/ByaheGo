@@ -362,8 +362,10 @@ class BookingService
             $this->payments->refund($booking, $remainingDeposit, "Security deposit returned for {$booking->reference}", $actor);
         }
 
-        $commission = (int) round(($booking->rental_subtotal + $booking->driver_fee_total) * Settings::get('commission_rate') / 100);
-        $hostEarnings = $booking->rental_subtotal + $booking->driver_fee_total - $commission + $booking->late_fee + $damage;
+        // Paid extensions are rental time too: the host earns them like the rest of the rental, minus the same commission.
+        $extensions = (int) $booking->extensions()->where('status', 'approved')->sum('amount');
+        $commission = (int) round(($booking->rental_subtotal + $booking->driver_fee_total + $extensions) * Settings::get('commission_rate') / 100);
+        $hostEarnings = $booking->rental_subtotal + $booking->driver_fee_total + $extensions - $commission + $booking->late_fee + $damage;
         $depositStatus = $remainingDeposit === $deposit ? 'released' : ($remainingDeposit > 0 ? 'partially_released' : 'applied');
 
         $booking->update([

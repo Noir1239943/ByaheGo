@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Mail\BookingConfirmedMail;
 use App\Mail\InvoiceMail;
 use App\Models\Booking;
+use App\Models\BookingExtension;
 use App\Models\Payment;
 use App\Models\User;
 use App\Support\Money;
@@ -34,21 +35,23 @@ class PaymentService
     // ---------------------------------------------------------------- checkout
 
     /** A pending payment plus a Xendit session for it. The renter is sent to $payment->checkout_url. */
-    public function startCheckout(Booking $booking, string $method, string $type = 'charge'): Payment
+    public function startCheckout(Booking $booking, string $method, string $type = 'charge', ?BookingExtension $extension = null): Payment
     {
-        $amount = $type === 'balance' ? (int) $booking->balance_due : (int) ($booking->total + $booking->security_deposit);
+        $until = $extension?->requested_return_at->timezone('Asia/Manila')->format('M j, g:i A');
+        [$amount, $description, $items] = match ($type) {
+            'extension' => [(int) $extension->amount, "Extra time for {$booking->reference}: return moved to {$until}", [['label' => "Extra rental time ({$extension->hours} h) until {$until}", 'amount' => (int) $extension->amount]]],
+            'balance' => [(int) $booking->balance_due, "Remaining balance for {$booking->reference}", [['label' => "Remaining balance (late fee and approved charges) for {$booking->reference}", 'amount' => (int) $booking->balance_due]]],
+            default => [(int) ($booking->total + $booking->security_deposit), "Trip {$booking->reference} – {$booking->vehicle->name} (includes ".Money::peso($booking->security_deposit).' refundable deposit)', InvoiceService::tripItems($booking)],
+        };
         $payment = $booking->payments()->create([
             'user_id' => $booking->renter_id, 'type' => $type, 'method' => $method, 'provider' => 'xendit', 'amount' => $amount, 'status' => 'pending',
-            'receipt_no' => self::receiptNo(),
-            'description' => $type === 'balance'
-                ? "Remaining balance for {$booking->reference}"
-                : "Trip {$booking->reference} – {$booking->vehicle->name} (includes ".Money::peso($booking->security_deposit).' refundable deposit)',
-            'items' => $type === 'balance' ? [['label' => "Remaining balance (late fee and approved charges) for {$booking->reference}", 'amount' => $amount]] : InvoiceService::tripItems($booking),
+            'receipt_no' => self::receiptNo(), 'description' => $description, 'items' => $items,
         ]);
 
-        $front = rtrim((string) config('app.frontend_url'), '/')."/checkout/return/{$booking->reference}";
+        // The return page opens on the extension tab for an extension payment.
+        $front = rtrim((string) config('app.frontend_url'), '/')."/checkout/return/{$booking->reference}".($type === 'extension' ? '?extension=1' : '');
         try {
-            $session = $this->gateway->createSession($payment->receipt_no, $amount, "ByaheGo trip {$booking->reference} – {$booking->vehicle->name}", $method, $front, $front.'?cancelled=1');
+            $session = $this->gateway->createSession($payment->receipt_no, $amount, "ByaheGo trip {$booking->reference} – {$booking->vehicle->name}", $method, $front, $front.($type === 'extension' ? '&' : '?').'cancelled=1');
         } catch (PaymentGatewayException $e) {
             Log::warning("Could not start payment for {$booking->reference}: ".$e->getMessage().' '.$e->errorCode);
             $payment->update(['status' => 'failed', 'failure_reason' => mb_substr($e->getMessage(), 0, 250)]);
@@ -112,6 +115,27 @@ class PaymentService
                 return;
             }
 
+            if ($p->type === 'extension') {
+                // The return time moves only now that the money is in, and only if the extension is still open and the car still free.
+                $ext = BookingExtension::where('payment_id', $p->id)->lockForUpdate()->first();
+                $open = $ext && $ext->status === 'awaiting_payment' && now()->lessThanOrEqualTo($ext->previous_return_at) && $b->status === 'active'
+                    && ! $b->checkout_submitted_at && $b->return_at->equalTo($ext->previous_return_at) && $b->vehicle->isFreeBetween($ext->previous_return_at, $ext->requested_return_at);
+                if ($open) {
+                    $ext->update(['status' => 'approved']);
+                    $b->update(['return_at' => $ext->requested_return_at, 'return_reminder_sent_at' => null]);
+                    $b->log('extension', 'Extension paid ('.Money::peso($p->amount).'). New return time: '.$ext->requested_return_at->timezone('Asia/Manila')->format('M j, g:i A').'.', $b->renter_id);
+                    Notifier::send($b->renter_id, 'Extension confirmed', "New return time for {$b->reference}: {$ext->requested_return_at->timezone('Asia/Manila')->format('M j, g:i A')}. No late fee until then.", "/account/trips/{$b->reference}", 'success');
+                    Notifier::send($b->host_id, 'Extension paid', "{$b->renter->name} paid ".Money::peso($p->amount)." for more time. New return time: {$ext->requested_return_at->timezone('Asia/Manila')->format('M j, g:i A')}.", "/host/bookings/{$b->reference}", 'success');
+                } else {
+                    // Paid too late (the original return time passed, so normal late fees apply), or the car is no longer free: money back.
+                    $ext?->update(['status' => 'lapsed']);
+                    $refundAll = true;
+                    $b->log('extension', 'Extension payment arrived too late or the car is no longer free, so it is being refunded.');
+                    Notifier::send($b->renter_id, 'Extension payment refunded', 'Your extension payment arrived after the original return time (or the car was no longer free), so it is being refunded. Normal late fees apply.', "/account/trips/{$b->reference}", 'warning');
+                }
+                return;
+            }
+
             if (in_array($b->status, ['confirmed', 'active', 'completed'], true)) return; // already confirmed by another payment: nothing more to do
 
             // Paid after the hold ran out: keep the booking only if nobody took the dates in the meantime.
@@ -139,7 +163,7 @@ class PaymentService
         if ($confirmed) {
             $invoice = $this->tryInvoice($payment);
             if ($refundAll) {
-                $this->refund($payment->booking, (int) $payment->amount, 'Automatic refund: the booking had already expired', null, 'OTHERS');
+                $this->refund($payment->booking, (int) $payment->amount, $payment->type === 'extension' ? 'Automatic refund: the extension could not be applied' : 'Automatic refund: the booking had already expired', null, 'OTHERS', null, $payment->type === 'extension' ? $payment : null);
             } elseif ($payment->type === 'charge') {
                 $this->sendConfirmationEmails($payment->booking->fresh(), $invoice);
             } elseif ($invoice) {
@@ -177,7 +201,7 @@ class PaymentService
 
     public function verifyBooking(Booking $booking): Booking
     {
-        foreach ($booking->payments()->whereIn('type', ['charge', 'balance'])->where('status', 'pending')->get() as $p) $this->verify($p);
+        foreach ($booking->payments()->whereIn('type', Payment::MONEY_IN)->where('status', 'pending')->get() as $p) $this->verify($p);
         return $booking->fresh();
     }
 
@@ -185,12 +209,12 @@ class PaymentService
     public function syncPending(): int
     {
         $n = 0;
-        Payment::whereIn('type', ['charge', 'balance'])->where('status', 'pending')->whereNotNull('provider_session_id')->where('created_at', '>=', now()->subHours(3))
+        Payment::whereIn('type', Payment::MONEY_IN)->where('status', 'pending')->whereNotNull('provider_session_id')->where('created_at', '>=', now()->subHours(3))
             ->each(function (Payment $p) use (&$n) { $this->verify($p); $n++; });
         Payment::where('type', 'refund')->where('status', 'pending')->whereNotNull('provider_refund_id')
             ->each(function (Payment $p) use (&$n) { $this->syncRefund($p); $n++; });
         // Paid online but no invoice yet (printing it failed the first time): try again.
-        Payment::where('status', 'succeeded')->whereIn('type', ['charge', 'balance', 'refund'])->whereNotNull('provider')->doesntHave('invoice')->limit(50)
+        Payment::where('status', 'succeeded')->whereIn('type', [...Payment::MONEY_IN, 'refund'])->whereNotNull('provider')->doesntHave('invoice')->limit(50)
             ->each(function (Payment $p) use (&$n) { if ($this->tryInvoice($p)) $n++; });
         return $n;
     }
@@ -221,7 +245,7 @@ class PaymentService
     /** What can still go back to the renter: money in, minus refunds that are done or on the way, minus charges taken. */
     public function refundable(Booking $booking): int
     {
-        $in = (int) $booking->payments()->whereIn('type', ['charge', 'balance'])->where('status', 'succeeded')->sum('amount');
+        $in = (int) $booking->payments()->whereIn('type', Payment::MONEY_IN)->where('status', 'succeeded')->sum('amount');
         $out = (int) $booking->payments()->where('type', 'refund')->whereIn('status', ['pending', 'succeeded'])->sum('amount');
         $kept = (int) $booking->payments()->whereIn('type', ['late_fee', 'damage', 'cancellation_fee'])->where('status', 'succeeded')->sum('amount');
         return max(0, $in - $out - $kept);
@@ -233,7 +257,7 @@ class PaymentService
      *
      * @return Payment[] the refund rows created
      */
-    public function refund(Booking $booking, int $amount, string $description, ?User $actor = null, string $providerReason = 'OTHERS', ?string $reason = null): array
+    public function refund(Booking $booking, int $amount, string $description, ?User $actor = null, string $providerReason = 'OTHERS', ?string $reason = null, ?Payment $from = null): array
     {
         $max = $this->refundable($booking);
         if ($amount <= 0 || $amount > $max) {
@@ -241,7 +265,7 @@ class PaymentService
         }
         $rows = [];
         $left = $amount;
-        $charges = $booking->payments()->whereIn('type', ['charge', 'balance'])->where('status', 'succeeded')->orderBy('id')->get();
+        $charges = $from ? collect([$from]) : $booking->payments()->whereIn('type', Payment::MONEY_IN)->where('status', 'succeeded')->orderBy('id')->get(); // a refund of one specific payment (an extension) goes back through that payment
         foreach ($charges as $charge) {
             if ($left <= 0) break;
             $already = (int) $booking->payments()->where('type', 'refund')->where('parent_id', $charge->id)->whereIn('status', ['pending', 'succeeded'])->sum('amount');

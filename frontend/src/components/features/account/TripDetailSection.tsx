@@ -74,6 +74,11 @@ export function TripDetailSection() {
     onSuccess: () => { setExtendErrors({}); done('Request sent. Your host will approve or decline it.') },
     onError: (e) => { setExtendErrors(getFieldErrors(e)); toast.error(getErrorMessage(e)) },
   })
+  const payExt = useMutation({
+    mutationFn: () => tripService.payExtension(reference),
+    onSuccess: (r) => (r.checkout_url ? window.location.assign(r.checkout_url) : done('Extension paid. Your new return time is set.')),
+    onError: (e) => { toast.error(getErrorMessage(e)); void qc.invalidateQueries({ queryKey: ['booking', reference] }) },
+  })
   const reportIt = useMutation({ mutationFn: () => bookingService.reportIncident(reference, report), onSuccess: () => done('Report sent. Our team will contact you shortly.'), onError: (e) => toast.error(getErrorMessage(e)) })
 
   if (isLoading) return <PageLoader />
@@ -127,8 +132,14 @@ export function TripDetailSection() {
         </Alert>
       )}
       {b.status === 'active' && b.trip.checkout_submitted_at && <Alert tone="info" title="Return photos submitted">Waiting for your host to review them{b.trip.host_review_due_at ? ` (by ${formatDateTime(b.trip.host_review_due_at)}, or the trip completes automatically)` : ''}.{b.trip.late.fee > 0 ? ` Excess fee: ${peso(b.trip.late.fee)} for ${b.trip.late.hours} hour(s), taken from your deposit.` : ''}</Alert>}
-      {b.trip.extension?.status === 'pending' && <Alert tone="info" title="Waiting for your host">You asked to return on {formatDateTime(b.trip.extension.requested_return_at)}. Until your host answers, the original return time still applies.</Alert>}
-      {b.trip.extension?.status === 'approved' && b.status === 'active' && <Alert tone="success" title="Extension approved">New return time: {formatDateTime(b.return_at)}. No late fee until then.</Alert>}
+      {b.trip.extension?.status === 'pending' && <Alert tone="info" title="Waiting for your host">You asked to return on {formatDateTime(b.trip.extension.requested_return_at)}. If your host approves, you pay about <b>{peso(b.trip.extension.amount)}</b> for the extra {b.trip.extension.hours} hour(s), and the new time only counts once you have paid. Until then the original return time still applies.</Alert>}
+      {b.trip.extension?.status === 'awaiting_payment' && b.status === 'active' && (
+        <Alert tone="warning" icon={<Clock />} title={`Extension approved: pay ${peso(b.trip.extension.amount)} to confirm it`} action={<Button size="sm" loading={payExt.isPending} onClick={() => payExt.mutate()}>Pay {peso(b.trip.extension.amount)}</Button>}>
+          Your host approved returning on <b>{formatDateTime(b.trip.extension.requested_return_at)}</b>. It is not confirmed until you pay: the return time stays {formatDateTime(b.trip.extension.previous_return_at)} until then. {b.trip.extension.pay_by ? `Pay before ${formatDateTime(b.trip.extension.pay_by)}; after that the extension lapses and normal late fees apply.` : ''}
+        </Alert>
+      )}
+      {b.trip.extension?.status === 'lapsed' && b.status === 'active' && <Alert tone="danger" title="Extension lapsed">It wasn't paid before the original return time, so the original time stands and normal late fees apply. Please return the car and take the return photos.</Alert>}
+      {b.trip.extension?.status === 'approved' && b.status === 'active' && <Alert tone="success" title="Extension confirmed">New return time: {formatDateTime(b.return_at)}. No late fee until then.</Alert>}
       {s === 'overdue' && <Alert tone="danger" title="Your return is overdue">Please return the vehicle as soon as possible. Excess-hour fees apply after the grace period. Take the return photos in the app, or call support if you need help.</Alert>}
       {b.balance_due > 0 && (
         <Alert tone="danger" title={`${peso(b.balance_due)} balance due`} action={<Button size="sm" onClick={() => setModal('pay')}>Pay now</Button>}>
@@ -238,7 +249,7 @@ export function TripDetailSection() {
         <PaymentMethodPicker value={method} onChange={setMethod} />
       </Modal>
 
-      <Modal open={modal === 'extend'} onClose={() => setModal(null)} title="Ask to return later" description="Your host decides. If they approve, the return time changes and no late fee applies until the new time." size="sm" footer={<Button loading={requestMore.isPending} disabled={!extend.return_at} onClick={() => requestMore.mutate()}>Send request</Button>}>
+      <Modal open={modal === 'extend'} onClose={() => setModal(null)} title="Ask to return later" description={`Your host decides. If they approve, you pay for the extra time (${peso(b.trip.late.per_hour)} per hour, full days at ${peso(b.daily_rate)}) before your current return time. The new time only counts once it is paid; if it isn\'t, the extension lapses and normal late fees apply.`} size="sm" footer={<Button loading={requestMore.isPending} disabled={!extend.return_at} onClick={() => requestMore.mutate()}>Send request</Button>}>
         <div className="space-y-4">
           <p className="text-sm text-ink-500">Current return time: <b>{formatDateTime(b.return_at)}</b></p>
           <Input label="New return time" type="datetime-local" value={extend.return_at} onChange={(e) => setExtend({ ...extend, return_at: e.target.value })} error={extendErrors.return_at} />

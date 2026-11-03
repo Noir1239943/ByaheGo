@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class BookingExtension extends Model
 {
-    protected $fillable = ['booking_id', 'previous_return_at', 'requested_return_at', 'status', 'note', 'responded_by', 'responded_at'];
+    protected $fillable = ['booking_id', 'previous_return_at', 'requested_return_at', 'amount', 'hours', 'payment_id', 'status', 'note', 'responded_by', 'responded_at'];
 
     protected function casts(): array
     {
@@ -15,4 +15,5 @@ class BookingExtension extends Model
     }
 
     public function booking(): BelongsTo { return $this->belongsTo(Booking::class); }
+    public function payment(): BelongsTo { return $this->belongsTo(Payment::class); }
 }

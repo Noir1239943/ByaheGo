@@ -86,6 +86,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::delete('bookings/{reference}/inspection/{stage}/photos/{id}', [TripController::class, 'deletePhoto'])->whereNumber('id');
     Route::post('bookings/{reference}/inspection/{stage}', [TripController::class, 'submit'])->middleware('throttle:20,1');
     Route::post('bookings/{reference}/extension', [TripController::class, 'requestExtension'])->middleware('throttle:20,1');
+    Route::post('bookings/{reference}/extension/pay', [TripController::class, 'payExtension'])->middleware('throttle:20,1');
     Route::post('bookings/{reference}/pay-balance', [BookingController::class, 'payBalance']);
     Route::post('bookings/{reference}/review', [BookingController::class, 'review']);
     Route::post('bookings/{reference}/incidents', [BookingController::class, 'reportIncident']);

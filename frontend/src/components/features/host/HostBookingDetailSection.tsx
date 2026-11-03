@@ -76,7 +76,7 @@ export function HostBookingDetailSection() {
     onSuccess: () => { setPins([]); done('Issue reported. The deposit stays held while our team reviews the photos and your pins.') },
     onError: onErr,
   })
-  const answerExtension = useMutation({ mutationFn: ({ id, approve }: { id: number; approve: boolean }) => hostService.respondExtension(reference, id, approve), onSuccess: (r) => done(r.trip.extension?.status === 'approved' ? 'Extension approved. The return time was updated.' : 'Extension declined.'), onError: onErr })
+  const answerExtension = useMutation({ mutationFn: ({ id, approve }: { id: number; approve: boolean }) => hostService.respondExtension(reference, id, approve), onSuccess: (r) => done(r.trip.extension?.status === 'approved' ? 'Approved. The renter now has to pay for the extra time; the return time changes once they have.' : 'Extension declined.'), onError: onErr })
   const notReturned = useMutation({ mutationFn: () => hostService.notReturned(reference), onSuccess: () => done('Reported. The renter is on hold and our team has been alerted.'), onError: onErr })
   const cancelTrip = useMutation({ mutationFn: () => hostService.cancelBooking(reference, cancelReason), onSuccess: () => done('Booking cancelled. The renter gets a full refund.'), onError: onErr })
   const report = useMutation({ mutationFn: () => hostService.incident(reference, { ...incident, amount_claimed: incident.amount_claimed ? Number(incident.amount_claimed) : 0 }), onSuccess: () => done('Report sent to our team.'), onError: onErr })
@@ -157,9 +157,11 @@ export function HostBookingDetailSection() {
       )}
       {b.trip.extension?.status === 'pending' && b.status === 'active' && (
         <Alert tone="info" icon={<Clock />} title="The renter asks for more time" action={<div className="flex gap-2"><Button size="sm" loading={answerExtension.isPending} onClick={() => answerExtension.mutate({ id: b.trip.extension!.id, approve: true })}>Approve</Button><Button size="sm" variant="secondary" loading={answerExtension.isPending} onClick={() => answerExtension.mutate({ id: b.trip.extension!.id, approve: false })}>Decline</Button></div>}>
-          New return time: <b>{formatDateTime(b.trip.extension.requested_return_at)}</b> (now {formatDateTime(b.trip.extension.previous_return_at)}).{b.trip.extension.note ? ` “${b.trip.extension.note}”` : ''} If you approve, no excess-hours fee applies until then.
+          New return time: <b>{formatDateTime(b.trip.extension.requested_return_at)}</b> (now {formatDateTime(b.trip.extension.previous_return_at)}).{b.trip.extension.note ? ` “${b.trip.extension.note}”` : ''} The renter pays <b>{peso(b.trip.extension.amount)}</b> for the extra {b.trip.extension.hours} hour(s) (your per-hour rate, full days at the daily rate). If you approve, the return time moves only after they have paid; if they don't pay before {formatDateTime(b.trip.extension.previous_return_at)} it lapses and normal late fees apply.
         </Alert>
       )}
+      {b.trip.extension?.status === 'awaiting_payment' && b.status === 'active' && <Alert tone="info" icon={<Clock />} title="Extension approved, waiting for the renter to pay">The renter must pay {peso(b.trip.extension.amount)} before {formatDateTime(b.trip.extension.previous_return_at)}. The return time changes only when the payment goes through.</Alert>}
+      {b.trip.extension?.status === 'lapsed' && b.status === 'active' && <Alert tone="warning" title="The extension lapsed">The renter did not pay in time, so the original return time stands and normal late fees apply.</Alert>}
 
       <div className="grid gap-5 xl:grid-cols-[1fr_340px]">
         <div className="space-y-5">

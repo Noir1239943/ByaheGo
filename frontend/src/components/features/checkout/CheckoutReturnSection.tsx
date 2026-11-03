@@ -8,6 +8,7 @@ import { Button, Card } from '@/components/ui'
 import { getErrorMessage } from '@/lib/api'
 import { formatDateTime, peso } from '@/lib/format'
 import { bookingService } from '@/services/bookings'
+import { tripService } from '@/services/trip'
 import type { Booking } from '@/types'
 
 const POLL_MS = 3000
@@ -24,6 +25,8 @@ export function CheckoutReturnSection() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const cameBack = params.get('cancelled') === '1'
+  // The same page also receives the renter coming back from paying for an approved extension (?extension=1).
+  const isExtension = params.get('extension') === '1'
   const [booking, setBooking] = useState<Booking | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [gaveUp, setGaveUp] = useState(false)
@@ -37,21 +40,39 @@ export function CheckoutReturnSection() {
     verify()
   }, [verify])
   useEffect(() => {
-    if (!booking || booking.status !== 'pending' || gaveUp) return
+    const waiting = isExtension ? booking?.trip.extension?.status === 'awaiting_payment' : booking?.status === 'pending'
+    if (!booking || !waiting || gaveUp) return
     const t = setTimeout(() => {
       if (Date.now() - startedAt.current > GIVE_UP_AFTER_MS) return setGaveUp(true)
       verify()
     }, POLL_MS)
     return () => clearTimeout(t)
-  }, [booking, gaveUp, verify])
+  }, [booking, gaveUp, verify, isExtension])
 
   useEffect(() => {
-    if (booking && ['confirmed', 'active', 'completed'].includes(booking.status)) {
+    if (!isExtension || !booking) return
+    const ext = booking.trip.extension
+    if (!ext || ext.status === 'awaiting_payment') return
+    void qc.invalidateQueries({ queryKey: ['booking', reference] })
+    void qc.invalidateQueries({ queryKey: ['billing'] })
+    if (ext.status === 'approved') toast.success(`Extension paid. Your new return time is ${formatDateTime(booking.return_at)}.`)
+    else toast.error('The extension was not applied: it was not paid in time, or the car was no longer free. Any payment is refunded automatically, and normal late fees apply.')
+    navigate(`/account/trips/${reference}`, { replace: true })
+  }, [booking, isExtension, navigate, qc, reference])
+
+  useEffect(() => {
+    if (!isExtension && booking && ['confirmed', 'active', 'completed'].includes(booking.status)) {
       void qc.invalidateQueries({ queryKey: ['trips'] })
       void qc.invalidateQueries({ queryKey: ['billing'] })
       navigate(`/booking/${booking.reference}/confirmed`, { replace: true })
     }
-  }, [booking, navigate, qc])
+  }, [booking, navigate, qc, isExtension])
+
+  const payAgain = useMutation({
+    mutationFn: () => tripService.payExtension(reference),
+    onSuccess: (r) => (r.checkout_url ? window.location.assign(r.checkout_url) : setBooking(r.booking)),
+    onError: (e) => toast.error(getErrorMessage(e)),
+  })
 
   const tryAgain = useMutation({
     mutationFn: () => bookingService.pay(reference),
@@ -69,6 +90,23 @@ export function CheckoutReturnSection() {
 
   if (error && !booking) return <div className="container-page py-10"><ErrorState error={error} onRetry={() => verify()} title="We couldn't check your payment" /></div>
   if (!booking) return <PageLoader label="Checking your payment…" />
+
+  if (isExtension) {
+    const ext = booking.trip.extension
+    if (!ext || ext.status !== 'awaiting_payment') return <PageLoader label="Updating your trip…" />
+    return (
+      <section className="container-page max-w-xl py-10 text-center">
+        <span className="mx-auto flex size-16 items-center justify-center rounded-full bg-accent-soft"><Clock className={isPending ? 'size-8 animate-pulse text-warning' : 'size-8 text-warning'} /></span>
+        <h1 className="mt-5 text-3xl font-extrabold tracking-tight">{cameBack ? 'You left the payment page' : gaveUp ? 'Still waiting for your payment' : 'Confirming your extension payment…'}</h1>
+        <p className="mt-2 text-ink-500">Your return time changes only once the {peso(ext.amount)} payment is confirmed. {ext.pay_by ? `Pay before ${formatDateTime(ext.pay_by)}, or the extension lapses and normal late fees apply.` : ''}</p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <Button icon={<RefreshCw className="size-4" />} variant="secondary" loading={isPending} onClick={() => { startedAt.current = Date.now(); setGaveUp(false); verify() }}>Check again</Button>
+          <Button loading={payAgain.isPending} onClick={() => payAgain.mutate()}>Go back to payment</Button>
+          <Button variant="ghost" to={`/account/trips/${reference}`}>Back to my trip</Button>
+        </div>
+      </section>
+    )
+  }
 
   if (['confirmed', 'active', 'completed'].includes(booking.status)) return <PageLoader label="Payment received. Opening your booking…" />
 

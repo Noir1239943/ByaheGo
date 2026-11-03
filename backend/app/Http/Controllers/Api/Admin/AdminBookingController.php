@@ -156,7 +156,7 @@ class AdminBookingController extends Controller
         }
         return response()->json(Present::paginated($q->paginate(15), fn ($p) => Present::payment($p, true)) + [
             'summary' => [
-                'collected' => (int) Payment::whereIn('type', ['charge', 'balance'])->where('status', 'succeeded')->sum('amount'),
+                'collected' => (int) Payment::whereIn('type', Payment::MONEY_IN)->where('status', 'succeeded')->sum('amount'),
                 'refunded' => (int) Payment::where('type', 'refund')->where('status', 'succeeded')->sum('amount'),
                 'refunds_pending' => (int) Payment::where('type', 'refund')->where('status', 'pending')->sum('amount'),
                 'refunds_failed' => Payment::where('type', 'refund')->where('status', 'failed')->count(),

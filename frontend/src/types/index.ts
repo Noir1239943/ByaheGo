@@ -181,7 +181,7 @@ export interface Quote {
 
 export interface Payment {
   id: number
-  type: 'charge' | 'refund' | 'late_fee' | 'damage' | 'balance' | 'cancellation_fee'
+  type: 'charge' | 'refund' | 'late_fee' | 'damage' | 'balance' | 'extension' | 'cancellation_fee'
   method: PaymentMethod | 'deposit'
   method_label: string
   amount: number
@@ -282,13 +282,21 @@ export interface TripInspection {
   photos: TripPhoto[]
 }
 
+/** pending = the host decides; awaiting_payment = approved, the renter must pay before the original return time; approved = paid and applied; lapsed = not paid in time. */
 export interface TripExtension {
   id: number
-  status: 'pending' | 'approved' | 'declined'
+  status: 'pending' | 'awaiting_payment' | 'approved' | 'declined' | 'lapsed'
   requested_return_at: string
   previous_return_at: string
   note: string | null
   responded_at: string | null
+  amount: number
+  hours: number
+  /** True while the host hasn't decided: the price is what it would cost. */
+  is_estimate: boolean
+  pay_by: string | null
+  /** The Xendit page for the renter (renter view only). */
+  checkout_url: string | null
 }
 
 export interface TripInfo {

@@ -8,6 +8,9 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Payment extends Model
 {
+    /** Payment types that bring money in from the renter (everything refundable and invoiced). */
+    public const MONEY_IN = ['charge', 'balance', 'extension'];
+
     protected $fillable = [
         'booking_id', 'parent_id', 'user_id', 'type', 'method', 'provider', 'amount', 'status', 'receipt_no', 'gateway_ref',
         'provider_session_id', 'checkout_url', 'provider_payment_id', 'provider_refund_id', 'account_hint', 'description', 'items', 'reason',
@@ -26,5 +29,5 @@ class Payment extends Model
     public function invoice(): HasOne { return $this->hasOne(Invoice::class); }
 
     /** Money that really came in from the renter (an online payment that went through). */
-    public function isMoneyIn(): bool { return in_array($this->type, ['charge', 'balance'], true) && $this->status === 'succeeded'; }
+    public function isMoneyIn(): bool { return in_array($this->type, self::MONEY_IN, true) && $this->status === 'succeeded'; }
 }

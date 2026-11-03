@@ -64,6 +64,15 @@ class TripController extends Controller
         return response()->json(Present::booking($booking->fresh()), 201);
     }
 
+    /** The renter pays for an extension the host approved. Returns the Xendit page to go to. */
+    public function payExtension(Request $request, string $reference)
+    {
+        $data = $request->validate(['payment_method' => ['nullable', Rule::in(array_keys(\App\Services\PaymentGateway::METHODS))]]);
+        $booking = $this->own($request, $reference);
+        $payment = $this->trips->payExtension($booking, $data['payment_method'] ?? null);
+        return response()->json(['checkout_url' => $payment->status === 'pending' ? $payment->checkout_url : null, 'booking' => Present::booking($booking->fresh())]);
+    }
+
     public function requestExtension(Request $request, string $reference)
     {
         $data = $request->validate(['return_at' => ['required', 'date'], 'note' => ['nullable', 'string', 'max:255']]);

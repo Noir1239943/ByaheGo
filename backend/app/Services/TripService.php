@@ -8,6 +8,7 @@ use App\Models\Incident;
 use App\Models\Inspection;
 use App\Models\InspectionPhoto;
 use App\Models\Media;
+use App\Models\Payment;
 use App\Models\User;
 use App\Support\Money;
 use App\Support\Notifier;
@@ -49,7 +50,7 @@ class TripService
 
     public const MAX_EXTENSION_DAYS = 7;
 
-    public function __construct(protected PricingService $pricing, protected BookingService $bookings, protected AccountStatusService $accounts) {}
+    public function __construct(protected PricingService $pricing, protected BookingService $bookings, protected AccountStatusService $accounts, protected PaymentService $payments) {}
 
     // ---------------------------------------------------------------- who can do what
 
@@ -271,7 +272,7 @@ class TripService
         if (now()->greaterThanOrEqualTo($b->return_at)) throw ValidationException::withMessages(['return_at' => 'The return time has passed. Contact your host or support.']);
         if ($newReturn->lessThanOrEqualTo($b->return_at)) throw ValidationException::withMessages(['return_at' => 'Pick a time later than the current return time.']);
         if ($newReturn->greaterThan($b->return_at->copy()->addDays(self::MAX_EXTENSION_DAYS))) throw ValidationException::withMessages(['return_at' => 'You can extend by up to '.self::MAX_EXTENSION_DAYS.' days at a time.']);
-        if ($b->extensions()->where('status', 'pending')->exists()) throw ValidationException::withMessages(['return_at' => 'You already have a request waiting for your host.']);
+        if ($b->extensions()->whereIn('status', ['pending', 'awaiting_payment'])->exists()) throw ValidationException::withMessages(['return_at' => 'You already have an extension request open. Wait for your host, or pay for the one they approved.']);
         if (! $b->vehicle->isFreeBetween($b->return_at, $newReturn)) throw ValidationException::withMessages(['return_at' => 'The car is booked or blocked by someone else in that time.']);
 
         $e = $b->extensions()->create(['previous_return_at' => $b->return_at, 'requested_return_at' => $newReturn, 'note' => $note]);
@@ -280,21 +281,103 @@ class TripService
         return $e;
     }
 
+    /**
+     * The host decides. Declining ends it. Approving does NOT move the return time yet: it prices the extra time (same rule as excess hours,
+     * full days at the daily rate), opens a Xendit payment for it, and the return time moves only once that payment is confirmed
+     * (PaymentService::confirm). If it isn't paid before the original return time the extension lapses and normal late fees apply.
+     */
     public function respondExtension(Booking $b, User $host, BookingExtension $e, bool $approve, ?string $note): BookingExtension
     {
         if ($e->status !== 'pending' || $e->booking_id !== $b->id) throw ValidationException::withMessages(['extension' => 'This request was already answered.']);
-        if ($approve) {
-            if ($b->status !== 'active' || ! $b->vehicle->isFreeBetween($b->return_at, $e->requested_return_at)) {
-                throw ValidationException::withMessages(['extension' => 'That time is no longer free for this car.']);
-            }
-            $b->update(['return_at' => $e->requested_return_at, 'return_reminder_sent_at' => null]);
+        $when = fn (Carbon $t) => $t->timezone('Asia/Manila')->format('M j, g:i A');
+
+        if (! $approve) {
+            $e->update(['status' => 'declined', 'responded_by' => $host->id, 'responded_at' => now(), 'note' => $note ?: $e->note]);
+            $b->log('extension', 'Host declined the extension.', $host->id);
+            Notifier::send($b->renter_id, 'Extension declined', "Your host declined the extension. Please return {$b->vehicle->name} by {$when($b->return_at)}.", "/account/trips/{$b->reference}", 'warning');
+            return $e->fresh();
         }
-        $e->update(['status' => $approve ? 'approved' : 'declined', 'responded_by' => $host->id, 'responded_at' => now(), 'note' => $note ?: $e->note]);
-        $b->log('extension', $approve ? 'Host approved the new return time: '.$e->requested_return_at->timezone('Asia/Manila')->format('M j, g:i A').'.' : 'Host declined the extension.', $host->id);
-        Notifier::send($b->renter_id, $approve ? 'Extension approved' : 'Extension declined', $approve
-            ? "New return time for {$b->reference}: {$e->requested_return_at->timezone('Asia/Manila')->format('M j, g:i A')}. No late fee applies until then."
-            : "Your host declined the extension. Please return {$b->vehicle->name} by {$b->return_at->timezone('Asia/Manila')->format('M j, g:i A')}.", "/account/trips/{$b->reference}", $approve ? 'success' : 'warning');
+
+        if ($b->status !== 'active' || $b->checkout_submitted_at || $b->return_at->isPast() || ! $b->return_at->equalTo($e->previous_return_at)) {
+            throw ValidationException::withMessages(['extension' => 'It is too late to approve this one: the return time has passed or changed.']);
+        }
+        if (! $b->vehicle->isFreeBetween($b->return_at, $e->requested_return_at)) {
+            throw ValidationException::withMessages(['extension' => 'That time is no longer free for this car.']);
+        }
+
+        $c = $this->pricing->extensionCharge($b->vehicle, $e->previous_return_at, $e->requested_return_at);
+        $e->update(['amount' => $c['amount'], 'hours' => $c['hours'], 'responded_by' => $host->id, 'responded_at' => now(), 'note' => $note ?: $e->note, 'status' => $c['amount'] > 0 ? 'awaiting_payment' : 'approved']);
+
+        if ($c['amount'] <= 0) { // a listing with no rate: nothing to pay, so it applies straight away
+            $b->update(['return_at' => $e->requested_return_at, 'return_reminder_sent_at' => null]);
+            $b->log('extension', "Host approved the new return time: {$when($e->requested_return_at)} (no charge).", $host->id);
+            Notifier::send($b->renter_id, 'Extension approved', "New return time for {$b->reference}: {$when($e->requested_return_at)}.", "/account/trips/{$b->reference}", 'success');
+            return $e->fresh();
+        }
+
+        $b->log('extension', "Host approved extra time until {$when($e->requested_return_at)}. Waiting for the renter to pay ".Money::peso($c['amount']).'.', $host->id);
+        try {
+            $payment = $this->payments->startCheckout($b, $this->extensionMethod($b), 'extension', $e);
+            $e->update(['payment_id' => $payment->id]);
+        } catch (PaymentGatewayException $ex) {
+            Log::warning("Could not open the extension payment for {$b->reference}: ".$ex->getMessage()); // the renter can open it from the trip page
+        }
+        Notifier::send($b->renter_id, 'Extension approved: please pay', 'Your host approved more time until '.$when($e->requested_return_at).'. Pay '.Money::peso($c['amount'])." before {$when($e->previous_return_at)} to confirm it. After that it lapses and normal late fees apply.", "/account/trips/{$b->reference}", 'warning');
         return $e->fresh();
+    }
+
+    protected function extensionMethod(Booking $b): string
+    {
+        return array_key_exists($b->payment_method, PaymentGateway::METHODS) ? $b->payment_method : 'gcash';
+    }
+
+    /** The renter opens (or reopens) the payment page for an approved extension. */
+    public function payExtension(Booking $b, ?string $method): Payment
+    {
+        $e = $b->extensions()->where('status', 'awaiting_payment')->first();
+        if (! $e) throw ValidationException::withMessages(['extension' => 'There is no approved extension waiting for payment.']);
+        if (now()->greaterThanOrEqualTo($e->previous_return_at)) {
+            $this->lapseExtensions();
+            throw ValidationException::withMessages(['extension' => 'The original return time has passed, so this extension lapsed. Normal late fees apply.']);
+        }
+        $old = $e->payment_id ? Payment::find($e->payment_id) : null;
+        if ($old && $old->status === 'pending') $old = $this->payments->verify($old);
+        if ($old && $old->status === 'succeeded') return $old;
+        if ($old && $old->status === 'pending' && $old->checkout_url && (! $method || $method === $old->method)) return $old;
+        if ($old && $old->status === 'pending' && $old->provider_session_id) {
+            app(PaymentGateway::class)->cancelSession($old->provider_session_id);
+            $old->update(['status' => 'failed', 'failure_reason' => 'The renter chose another payment method.']);
+        }
+        try {
+            $payment = $this->payments->startCheckout($b, $method ?: ($old?->method ?? $this->extensionMethod($b)), 'extension', $e);
+        } catch (PaymentGatewayException) {
+            throw ValidationException::withMessages(['payment' => 'We couldn\'t open the payment page just now. Nothing was charged. Please try again in a moment.']);
+        }
+        $e->update(['payment_id' => $payment->id]);
+        return $payment;
+    }
+
+    /** Approved but unpaid by the original return time: the extension lapses, the open payment page is closed, late fees apply as usual. */
+    public function lapseExtensions(): int
+    {
+        $n = 0;
+        BookingExtension::where('status', 'awaiting_payment')->where('previous_return_at', '<=', now())->with(['booking.vehicle', 'payment'])
+            ->each(function (BookingExtension $e) use (&$n) {
+                if ($e->payment?->status === 'pending') $this->payments->verify($e->payment); // paid a second ago?
+                $e->refresh();
+                if ($e->status !== 'awaiting_payment') return;
+                $b = $e->booking;
+                $e->update(['status' => 'lapsed']);
+                if ($e->payment?->status === 'pending') {
+                    if ($e->payment->provider_session_id) app(PaymentGateway::class)->cancelSession($e->payment->provider_session_id);
+                    $e->payment->update(['status' => 'failed', 'failure_reason' => 'The extension lapsed: not paid before the original return time.']);
+                }
+                $b->log('extension', 'The extension lapsed: it was not paid before the original return time. Normal late fees apply.');
+                Notifier::send($b->renter_id, 'Extension lapsed', "You didn't pay for the extra time before the original return time, so it lapsed. Please return {$b->vehicle->name} now; normal late fees apply.", "/account/trips/{$b->reference}", 'danger');
+                Notifier::send($b->host_id, 'Extension lapsed', "The renter didn't pay for the extension on {$b->reference}. The original return time stands.", "/host/bookings/{$b->reference}", 'warning');
+                $n++;
+            });
+        return $n;
     }
 
     // ---------------------------------------------------------------- "car not returned"
@@ -370,7 +453,7 @@ class TripService
                     Log::error("Could not auto-complete {$b->reference}: ".$e->getMessage());
                 }
             });
-        return ['checkins_accepted' => $accepted, 'trips_completed' => $completed, 'reminders' => $this->sendReturnReminders()];
+        return ['checkins_accepted' => $accepted, 'trips_completed' => $completed, 'reminders' => $this->sendReturnReminders(), 'extensions_lapsed' => $this->lapseExtensions()];
     }
 
     // ---------------------------------------------------------------- what the apps show
@@ -390,6 +473,21 @@ class TripService
                 'lat' => $p->lat, 'lng' => $p->lng, 'note' => $p->note, 'sha256' => $p->sha256,
                 'uploader_role' => $p->uploader_id === $i->booking?->host_id ? 'host' : 'renter',
             ])->values(),
+        ];
+    }
+
+    protected function presentExtension(Booking $b, BookingExtension $ext, string $viewer): array
+    {
+        // An approved extension nobody paid for is already lapsed once the original return time has passed, even before the sweep runs.
+        $status = $ext->status === 'awaiting_payment' && $ext->previous_return_at->isPast() ? 'lapsed' : $ext->status;
+        $price = $ext->status === 'pending' ? $this->pricing->extensionCharge($b->vehicle, $ext->previous_return_at, $ext->requested_return_at) : ['amount' => $ext->amount, 'hours' => $ext->hours];
+        $open = $ext->payment && $ext->payment->status === 'pending' ? $ext->payment : null;
+        return [
+            'id' => $ext->id, 'status' => $status, 'requested_return_at' => $ext->requested_return_at->toIso8601String(),
+            'previous_return_at' => $ext->previous_return_at->toIso8601String(), 'note' => $ext->note, 'responded_at' => $ext->responded_at?->toIso8601String(),
+            'amount' => (int) $price['amount'], 'hours' => (int) $price['hours'], 'is_estimate' => $ext->status === 'pending',
+            'pay_by' => $ext->status === 'awaiting_payment' ? $ext->previous_return_at->toIso8601String() : null,
+            'checkout_url' => $viewer === 'renter' && $status === 'awaiting_payment' ? $open?->checkout_url : null,
         ];
     }
 
@@ -415,11 +513,8 @@ class TripService
                 'extra_day_applied' => $late['extra_day_applied'], 'full_day_after_hours' => (int) Settings::get('excess_hours_full_day'),
                 'is_overdue' => $b->status === 'active' && ! $b->checkout_submitted_at && $b->return_at->isPast(),
             ],
-            'extension' => $ext ? [
-                'id' => $ext->id, 'status' => $ext->status, 'requested_return_at' => $ext->requested_return_at->toIso8601String(),
-                'previous_return_at' => $ext->previous_return_at->toIso8601String(), 'note' => $ext->note, 'responded_at' => $ext->responded_at?->toIso8601String(),
-            ] : null,
-            'can_request_extension' => $viewer === 'renter' && $b->status === 'active' && ! $b->checkout_submitted_at && $b->return_at->isFuture() && ! $b->extensions()->where('status', 'pending')->exists(),
+            'extension' => $ext ? $this->presentExtension($b, $ext, $viewer) : null,
+            'can_request_extension' => $viewer === 'renter' && $b->status === 'active' && ! $b->checkout_submitted_at && $b->return_at->isFuture() && ! $b->extensions()->whereIn('status', ['pending', 'awaiting_payment'])->exists(),
             'overdue_hours' => $b->status === 'active' ? $this->overdueHours($b) : 0,
             'can_report_not_returned' => $viewer === 'host' && $this->canReportNotReturned($b),
             'not_returned_after_hours' => (int) Settings::get('theft_overdue_hours'),

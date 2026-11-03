@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Booking;
 use App\Models\Incident;
 use App\Models\InspectionPhoto;
+use App\Models\Invoice;
 use App\Models\Payment;
 use App\Models\User;
 use App\Models\UserNotification;
@@ -213,26 +214,249 @@ class TripFlowTest extends TestCase
         $this->assertSame(0, Incident::count());
     }
 
-    public function test_extension_request_approval_and_decline(): void
+    /** Asks for `$hours` more time on top of the current return time. */
+    protected function askForTime($u, string $ref, int $hours, array $over = [])
     {
-        [$host, $u, $ref, $v] = $this->running(['return_at' => now()->addHours(5)]);
-        $new = now()->addDay()->toIso8601String();
-        $this->as($u)->postJson("/api/bookings/{$ref}/extension", ['return_at' => now()->addHours(2)->toIso8601String()])->assertStatus(422)->assertJsonValidationErrors('return_at'); // earlier than now+5h
-        $this->as($u)->postJson("/api/bookings/{$ref}/extension", ['return_at' => now()->addDays(20)->toIso8601String()])->assertStatus(422);
-        $this->as($u)->postJson("/api/bookings/{$ref}/extension", ['return_at' => $new, 'note' => 'Flight delayed'])->assertCreated()->assertJsonPath('trip.extension.status', 'pending');
-        $this->as($u)->postJson("/api/bookings/{$ref}/extension", ['return_at' => $new])->assertStatus(422); // one at a time
+        $to = Booking::where('reference', $ref)->first()->return_at->copy()->addHours($hours)->toIso8601String();
+        return $this->as($u)->postJson("/api/bookings/{$ref}/extension", $over + ['return_at' => $to]);
+    }
 
-        $id = Booking::where('reference', $ref)->first()->extensions()->first()->id;
-        $this->as($u)->postJson("/api/host/bookings/{$ref}/extensions/{$id}", ['approve' => true])->assertForbidden();
-        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$id}", ['approve' => true])->assertOk()->assertJsonPath('trip.extension.status', 'approved');
-        $this->assertEqualsWithDelta(now()->addDay()->timestamp, Booking::where('reference', $ref)->first()->return_at->timestamp, 5);
-        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$id}", ['approve' => false])->assertStatus(422); // already answered
+    protected function extensionOf(string $ref)
+    {
+        return Booking::where('reference', $ref)->first()->extensions()->first();
+    }
 
-        // A declined one leaves the return time alone.
-        $this->as($u)->postJson("/api/bookings/{$ref}/extension", ['return_at' => now()->addDays(2)->toIso8601String()])->assertCreated();
-        $id2 = Booking::where('reference', $ref)->first()->extensions()->first()->id;
-        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$id2}", ['approve' => false])->assertOk()->assertJsonPath('trip.extension.status', 'declined');
-        $this->assertEqualsWithDelta(now()->addDay()->timestamp, Booking::where('reference', $ref)->first()->return_at->timestamp, 5);
+    /** A running trip due back in 5 hours, with an extension of 27 hours asked for (₱3,200 for the day + 3 h × ₱320 = ₱4,160). */
+    protected function extensionAsked(array $vehicleOver = []): array
+    {
+        $host = $this->host();
+        $v = $this->vehicle($vehicleOver, $host);
+        $u = $this->verifiedRenter();
+        $ref = $this->book($u, $v)->assertCreated()->json('reference');
+        Booking::where('reference', $ref)->update(['pickup_at' => now()->subHour(), 'return_at' => now()->addHours(5)]);
+        $this->inspect($u, $ref, 'checkin', ['odometer' => 12000, 'fuel_level' => 100])->assertCreated();
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 12000, 'fuel_level' => 100, 'checklist' => ['exterior' => true]])->assertOk();
+        $this->xendit['session_status'] = 'ACTIVE'; // from here on nothing is paid until a test says so
+        $this->askForTime($u, $ref, 27, ['note' => 'Flight delayed'])->assertCreated()->assertJsonPath('trip.extension.status', 'pending');
+        return [$host, $u, $ref, $v];
+    }
+
+    public function test_extension_price_uses_the_same_rule_as_excess_hours(): void
+    {
+        $v = $this->vehicle(); // ₱3,200 a day, ₱320 an hour, 5 hours = a full day
+        $p = app(PricingService::class);
+        $from = now()->startOfHour();
+        $price = fn (int $minutes) => $p->extensionCharge($v, $from, $from->copy()->addMinutes($minutes));
+        $this->assertSame(320, $price(1)['amount']);            // every started hour counts, no grace
+        $this->assertSame(960, $price(180)['amount']);
+        $this->assertSame(1280, $price(240)['amount']);
+        $this->assertSame(3200, $price(300)['amount']);         // 5 hours = one full day at the daily rate
+        $this->assertTrue($price(300)['extra_day_applied']);
+        $this->assertSame(3200, $price(24 * 60)['amount']);
+        $this->assertSame(3200 + 960, $price(27 * 60)['amount']); // a day and 3 hours
+        $this->assertSame(6400, $price(29 * 60)['amount']);     // a day and 5 hours = two days
+        // The two can never disagree: the excess-hours fee for the same hours is the same number (before its cap).
+        foreach ([3, 4, 5, 9, 27] as $h) {
+            $late = $p->lateFee($v, $from, $from->copy()->addHours($h)->subMinutes(10))['fee'];
+            $this->assertSame(min($late, (int) round(ceil($h / 24) * 3200 * 1.5)), min($p->extensionCharge($v, $from, $from->copy()->addHours($h))['amount'], (int) round(ceil($h / 24) * 3200 * 1.5)));
+        }
+    }
+
+    public function test_approving_opens_a_payment_and_the_return_time_moves_only_when_it_is_paid(): void
+    {
+        [$host, $u, $ref] = $this->extensionAsked();
+        $original = Booking::where('reference', $ref)->first()->return_at->copy();
+        $e = $this->extensionOf($ref);
+        $this->as($u)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertForbidden();
+
+        $res = $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertOk()
+            ->assertJsonPath('trip.extension.status', 'awaiting_payment')->assertJsonPath('trip.extension.amount', 4160)->assertJsonPath('trip.extension.hours', 27)
+            ->assertJsonPath('trip.extension.checkout_url', null); // the host never gets the renter's payment link
+        $this->assertTrue(Booking::where('reference', $ref)->first()->return_at->equalTo($original)); // not moved yet
+
+        $payment = Payment::where('type', 'extension')->first();
+        $this->assertSame(4160, $payment->amount);
+        $this->assertSame('pending', $payment->status);
+        $call = collect($this->xendit['calls'])->last();
+        $this->assertSame(4160, $call['amount']);
+        $this->assertSame(['GCASH'], $call['allowed_payment_channels']);
+        $this->assertStringContainsString('extension=1', $call['success_return_url']);
+        $this->assertSame($payment->id, $e->fresh()->payment_id);
+
+        $renterView = $this->as($u)->getJson("/api/bookings/{$ref}")->assertJsonPath('trip.extension.status', 'awaiting_payment')->assertJsonPath('trip.can_request_extension', false);
+        $this->assertStringStartsWith('https://pay.test/', $renterView->json('trip.extension.checkout_url'));
+        $this->assertNotNull($renterView->json('trip.extension.pay_by'));
+        $this->askForTime($u, $ref, 30)->assertStatus(422); // one extension at a time
+
+        // Coming back from Xendit before paying changes nothing; the same payment page is offered again.
+        $this->payBooking($u, $ref)->assertOk()->assertJsonPath('trip.extension.status', 'awaiting_payment');
+        $this->as($u)->postJson("/api/bookings/{$ref}/extension/pay")->assertOk()->assertJsonPath('checkout_url', $renterView->json('trip.extension.checkout_url'));
+
+        // Paid: now the return time moves, the extension is approved, there is an invoice, and both people hear about it.
+        $this->xendit['session_status'] = 'COMPLETED';
+        $this->payBooking($u, $ref)->assertOk()->assertJsonPath('trip.extension.status', 'approved')->assertJsonPath('trip.can_request_extension', true);
+        $this->payBooking($u, $ref)->assertOk(); // idempotent
+        $b = Booking::where('reference', $ref)->first();
+        $this->assertTrue($b->return_at->equalTo($original->copy()->addHours(27)));
+        $this->assertSame('succeeded', $payment->fresh()->status);
+        $invoice = Invoice::where('payment_id', $payment->id)->first();
+        $this->assertMatchesRegularExpression('/^BYG-\d{4}-\d{6}$/', $invoice->number);
+        $this->assertSame(4160, array_sum(array_column($invoice->data['items'], 'amount')));
+        $this->assertSame(1, UserNotification::where('user_id', $u->id)->where('title', 'Extension confirmed')->count());
+        $this->assertSame(1, UserNotification::where('user_id', $host->id)->where('title', 'Extension paid')->count());
+
+        // Billing history shows it as a payment with its invoice, and it counts in the total paid.
+        $bill = $this->as($u)->getJson('/api/me/billing?type=payments')->assertOk();
+        $row = collect($bill->json('data'))->firstWhere('type', 'extension');
+        $this->assertSame(4160, $row['amount']);
+        $this->assertSame($invoice->number, $row['invoice_no']);
+        $this->assertSame(11880 + 4160, $bill->json('summary.total_paid'));
+        $this->as($u)->get("/api/payments/{$payment->id}/invoice.pdf")->assertOk();
+    }
+
+    public function test_an_extension_nobody_pays_for_lapses_at_the_original_return_time(): void
+    {
+        [$host, $u, $ref] = $this->extensionAsked();
+        $original = Booking::where('reference', $ref)->first()->return_at->copy();
+        $e = $this->extensionOf($ref);
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertOk();
+
+        $this->artisan('trips:sweep')->assertSuccessful(); // still before the original return time: stays open
+        $this->assertSame('awaiting_payment', $e->fresh()->status);
+
+        $this->travel(6)->hours(); // past the original return time
+        // It already reads as lapsed before the sweep runs, and the renter can't open a payment for it any more.
+        $this->as($u)->getJson("/api/bookings/{$ref}")->assertJsonPath('trip.extension.status', 'lapsed')->assertJsonPath('trip.extension.checkout_url', null);
+        $this->artisan('trips:sweep')->assertSuccessful();
+        $this->assertSame('lapsed', $e->fresh()->status);
+        $this->assertSame('failed', Payment::where('type', 'extension')->first()->status);
+        $this->assertTrue(Booking::where('reference', $ref)->first()->return_at->equalTo($original));
+        $this->assertSame(1, UserNotification::where('user_id', $u->id)->where('title', 'Extension lapsed')->count());
+        $this->assertSame(1, UserNotification::where('user_id', $host->id)->where('title', 'Extension lapsed')->count());
+        $this->as($u)->postJson("/api/bookings/{$ref}/extension/pay")->assertStatus(422)->assertJsonValidationErrors('extension');
+        $this->assertSame(0, Invoice::where('payment_id', Payment::where('type', 'extension')->value('id'))->count());
+
+        // Normal late fees apply, counted from the ORIGINAL return time (the extension never moved it).
+        $due = Booking::where('reference', $ref)->first();
+        $expected = app(PricingService::class)->lateFee($due->vehicle, $due->return_at, now());
+        $res = $this->inspect($u, $ref, 'checkout', ['odometer' => 12100])->assertCreated();
+        $this->assertGreaterThanOrEqual(1, $res->json('trip.late.hours'));
+        $this->assertSame($expected['hours'], $res->json('trip.late.hours'));
+        $this->assertSame($expected['fee'], $res->json('trip.late.fee'));
+        $this->assertGreaterThan(0, $res->json('trip.late.fee'));
+    }
+
+    public function test_money_that_arrives_after_the_original_return_time_is_refunded_not_applied(): void
+    {
+        [$host, $u, $ref] = $this->extensionAsked();
+        $original = Booking::where('reference', $ref)->first()->return_at->copy();
+        $e = $this->extensionOf($ref);
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertOk();
+
+        $this->travel(6)->hours();
+        $this->xendit['session_status'] = 'COMPLETED'; // the renter paid on Xendit's page, but too late
+        $this->payBooking($u, $ref)->assertOk()->assertJsonPath('trip.extension.status', 'lapsed');
+        $this->assertTrue(Booking::where('reference', $ref)->first()->return_at->equalTo($original));
+        $paid = Payment::where('type', 'extension')->first();
+        $refund = Payment::where('type', 'refund')->where('parent_id', $paid->id)->first(); // goes back through the extension payment itself
+        $this->assertNotNull($refund);
+        $this->assertSame(4160, $refund->amount);
+        $this->assertSame('succeeded', $refund->status);
+        $this->assertSame(1, UserNotification::where('user_id', $u->id)->where('title', 'Extension payment refunded')->count());
+        $this->assertSame(4160, collect($this->xendit['calls'])->firstWhere('payment_id', 'py-ps-test-2')['amount']);
+    }
+
+    public function test_if_someone_books_the_car_before_the_extension_is_paid_the_payment_is_refunded(): void
+    {
+        [$host, $u, $ref, $v] = $this->extensionAsked();
+        $e = $this->extensionOf($ref);
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertOk();
+        $this->xendit['session_status'] = 'COMPLETED';
+        $this->book($this->verifiedRenter(), $v, ['pickup_at' => now()->addHours(10)->toIso8601String(), 'return_at' => now()->addDays(3)->toIso8601String()])->assertCreated();
+
+        $original = Booking::where('reference', $ref)->first()->return_at->copy();
+        $this->payBooking($u, $ref)->assertOk()->assertJsonPath('trip.extension.status', 'lapsed');
+        $this->assertTrue(Booking::where('reference', $ref)->first()->return_at->equalTo($original));
+        $this->assertSame(1, Payment::where('type', 'refund')->where('amount', 4160)->count());
+    }
+
+    public function test_the_host_can_not_approve_after_the_return_time_and_declining_still_works(): void
+    {
+        [$host, $u, $ref] = $this->extensionAsked();
+        $e = $this->extensionOf($ref);
+        $this->travel(6)->hours();
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertStatus(422)->assertJsonValidationErrors('extension');
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => false])->assertOk()->assertJsonPath('trip.extension.status', 'declined');
+        $this->assertSame(0, Payment::where('type', 'extension')->count());
+        $this->assertSame(1, UserNotification::where('user_id', $u->id)->where('title', 'Extension declined')->count());
+    }
+
+    public function test_an_extension_that_costs_nothing_applies_straight_away(): void
+    {
+        [$host, $u, $ref] = $this->extensionAsked(['late_fee_per_hour' => 0]);
+        $b = Booking::where('reference', $ref)->first();
+        $e = $this->extensionOf($ref);
+        $e->update(['requested_return_at' => $b->return_at->copy()->addHours(2)]); // 2 hours at ₱0 an hour
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertOk()->assertJsonPath('trip.extension.status', 'approved')->assertJsonPath('trip.extension.amount', 0);
+        $this->assertTrue($b->fresh()->return_at->equalTo($e->fresh()->requested_return_at));
+        $this->assertSame(0, Payment::where('type', 'extension')->count());
+    }
+
+    public function test_the_renter_can_pay_with_another_method_and_a_failed_page_can_be_reopened(): void
+    {
+        [$host, $u, $ref] = $this->extensionAsked();
+        $e = $this->extensionOf($ref);
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertOk();
+        $first = Payment::where('type', 'extension')->first();
+
+        $this->as($u)->postJson("/api/bookings/{$ref}/extension/pay", ['payment_method' => 'maya'])->assertOk();
+        $this->assertSame('failed', $first->fresh()->status); // the old page was closed
+        $second = Payment::where('type', 'extension')->where('method', 'maya')->first();
+        $this->assertSame(['PAYMAYA'], collect($this->xendit['calls'])->last()['allowed_payment_channels']);
+        $this->assertSame($second->id, $e->fresh()->payment_id);
+        $this->as($u)->postJson("/api/bookings/{$ref}/extension/pay", ['payment_method' => 'apple_pay'])->assertStatus(422);
+        $this->as($this->verifiedRenter())->postJson("/api/bookings/{$ref}/extension/pay")->assertNotFound();
+
+        $this->xendit['session_status'] = 'COMPLETED';
+        $this->as($u)->postJson("/api/bookings/{$ref}/extension/pay")->assertOk()->assertJsonPath('checkout_url', null)->assertJsonPath('booking.trip.extension.status', 'approved');
+    }
+
+    public function test_a_paid_extension_is_rental_income_for_the_host_and_can_be_refunded_with_the_trip(): void
+    {
+        [$host, $u, $ref] = $this->extensionAsked();
+        $e = $this->extensionOf($ref);
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertOk();
+        $this->xendit['session_status'] = 'COMPLETED';
+        $this->payBooking($u, $ref)->assertOk();
+
+        $this->inspect($u, $ref, 'checkout', ['odometer' => 12300])->assertCreated()->assertJsonPath('trip.late.fee', 0); // on time against the NEW return time
+        $done = $this->as($host)->postJson("/api/host/bookings/{$ref}/return/review", ['decision' => 'accept'])->assertOk()->assertJsonPath('status', 'completed');
+        $commission = (int) round((6400 + 4160) * 0.15);
+        $this->assertSame($commission, $done->json('commission'));
+        $this->assertSame(6400 + 4160 - $commission, $done->json('host_earnings'));
+        $this->assertSame(6400 + 4160 - $commission, (int) \App\Models\Payout::first()->amount);
+    }
+
+    public function test_cancelling_a_running_trip_refunds_a_paid_extension_too(): void
+    {
+        [$host, $u, $ref] = $this->extensionAsked();
+        $e = $this->extensionOf($ref);
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertOk();
+        $this->xendit['session_status'] = 'COMPLETED';
+        $this->payBooking($u, $ref)->assertOk();
+        $this->as($this->admin())->postJson("/api/admin/bookings/{$ref}/cancel", ['reason' => 'Test', 'refund' => true])->assertOk();
+        $this->assertSame(11880 + 4160, (int) Payment::where('type', 'refund')->where('status', 'succeeded')->sum('amount'));
+    }
+
+    public function test_an_approved_and_paid_extension_stops_the_not_returned_report(): void
+    {
+        [$host, $u, $ref] = $this->extensionAsked();
+        $e = $this->extensionOf($ref);
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$e->id}", ['approve' => true])->assertOk();
+        $this->xendit['session_status'] = 'COMPLETED';
+        $this->payBooking($u, $ref)->assertOk();
+        $this->travel(20)->hours(); // past the old return time, well before the new one
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/not-returned")->assertStatus(422);
     }
 
     public function test_extension_cannot_overlap_someone_elses_booking(): void
@@ -276,16 +500,6 @@ class TripFlowTest extends TestCase
         $mail = app('mailer')->getSymfonyTransport()->messages()->filter(fn ($m) => str_contains($m->getOriginalMessage()->getSubject(), 'was not returned'));
         $this->assertCount(1, $mail);
         $this->as($host)->postJson("/api/host/bookings/{$ref}/not-returned")->assertStatus(422); // once only
-    }
-
-    public function test_an_approved_extension_stops_the_not_returned_report(): void
-    {
-        [$host, $u, $ref] = $this->running(['pickup_at' => now()->subDays(2), 'return_at' => now()->addHours(2)]);
-        $this->as($u)->postJson("/api/bookings/{$ref}/extension", ['return_at' => now()->addDays(2)->toIso8601String()])->assertCreated();
-        $id = Booking::where('reference', $ref)->first()->extensions()->first()->id;
-        $this->as($host)->postJson("/api/host/bookings/{$ref}/extensions/{$id}", ['approve' => true])->assertOk();
-        $this->travel(20)->hours();
-        $this->as($host)->postJson("/api/host/bookings/{$ref}/not-returned")->assertStatus(422);
     }
 
     public function test_renter_can_report_a_stolen_car_with_photos_and_location(): void

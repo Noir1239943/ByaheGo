@@ -94,7 +94,7 @@ class AccountController extends Controller
         // Filters: what kind of line, its status, and a date range. Paged on the server.
         if ($type = $request->input('type')) {
             $q->whereIn('type', match ($type) {
-                'payments' => ['charge', 'balance'],
+                'payments' => ['charge', 'balance', 'extension'],
                 'refunds' => ['refund'],
                 'deposits' => ['late_fee', 'damage'],
                 'fees' => ['late_fee', 'damage', 'cancellation_fee'],
@@ -106,13 +106,13 @@ class AccountController extends Controller
             $q->where('status', $status);
         } else {
             // Payment pages that were opened and never paid are noise; they only show when asked for with the status filter.
-            $q->where(fn ($w) => $w->whereNotIn('type', ['charge', 'balance'])->orWhereNotIn('status', ['failed', 'expired']));
+            $q->where(fn ($w) => $w->whereNotIn('type', Payment::MONEY_IN)->orWhereNotIn('status', ['failed', 'expired']));
         }
         if ($from = $request->input('from')) $q->whereDate('created_at', '>=', $from);
         if ($to = $request->input('to')) $q->whereDate('created_at', '<=', $to);
         return response()->json(\App\Support\Present::paginated($q->paginate(15), fn ($p) => Present::payment($p)) + [
             'summary' => [
-                'total_paid' => $sum(['charge', 'balance']),
+                'total_paid' => $sum(Payment::MONEY_IN),
                 'total_refunded' => $sum(['refund']),
                 'refunds_pending' => $sum(['refund'], ['pending']),
                 'fees_and_charges' => $sum(['late_fee', 'damage']),
