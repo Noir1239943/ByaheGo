@@ -5,6 +5,9 @@ import type { VehicleFilters } from '@/services/vehicles'
 
 export const FILTER_KEYS = ['type', 'transmission', 'fuel', 'seats', 'price_min', 'price_max', 'rental_type', 'instant_book', 'delivery', 'pet_friendly'] as const
 
+/** Where we are searching around. The sort 'nearest' only makes sense while these are set. */
+export const LOCATION_KEYS = ['lat', 'lng', 'radius', 'place'] as const
+
 /** Search + filter state lives in the URL so results are shareable and survive refresh. */
 export function useVehicleSearch() {
   const [params, setParams] = useSearchParams()
@@ -33,6 +36,8 @@ export function useVehicleSearch() {
     setParams((prev) => {
       const next = new URLSearchParams(prev)
       FILTER_KEYS.forEach((k) => next.delete(k))
+      LOCATION_KEYS.forEach((k) => next.delete(k))
+      if (next.get('sort') === 'nearest') next.delete('sort')
       next.delete('page')
       return next
     })
@@ -41,13 +46,16 @@ export function useVehicleSearch() {
   const apiFilters = useMemo<VehicleFilters>(() => {
     const pickup = get('pickup')
     const ret = get('return')
+    const near = !!get('lat') && !!get('lng')
     const f: VehicleFilters = {
       location: get('location'),
       q: get('q'),
-      sort: get('sort') || 'recommended',
+      // A shared link can say sort=nearest without a position. Fall back instead of showing an error.
+      sort: get('sort') === 'nearest' && !near ? 'recommended' : get('sort') || 'recommended',
       page: get('page') || 1,
-      lat: get('lat'),
-      lng: get('lng'),
+      lat: near ? get('lat') : '',
+      lng: near ? get('lng') : '',
+      radius: near ? get('radius') : '',
     }
     FILTER_KEYS.forEach((k) => (f[k] = get(k)))
     if (pickup && ret && new Date(ret) > new Date(pickup)) {
@@ -57,7 +65,7 @@ export function useVehicleSearch() {
     return f
   }, [get])
 
-  const activeCount = FILTER_KEYS.filter((k) => params.get(k)).length
+  const activeCount = FILTER_KEYS.filter((k) => params.get(k)).length + (params.get('lat') ? 1 : 0)
   /** Query string to carry the chosen dates over to the vehicle page. */
   const tripQuery = useMemo(() => {
     const q = new URLSearchParams()

@@ -1,29 +1,25 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router'
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock, Lightbulb, LocateFixed, MapPin, Plus, Store, Zap } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clock, Lightbulb, MapPin, Plus, Store, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import { ImageUploader, MultiImageUploader } from '@/components/common/ImageUploader'
 import { PageLoader } from '@/components/common/States'
 import { VehicleArt } from '@/components/common/VehicleArt'
 import { VehicleImage } from '@/components/common/VehicleImage'
 import { Alert, Button, Card, Chip, Input, Select, Stepper, Switch, Textarea } from '@/components/ui'
-import { useGeolocation } from '@/hooks/useGeolocation'
 import { getErrorMessage, getFieldErrors, mediaUrl } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { FEATURE_OPTIONS, VEHICLE_TYPES, typeLabel } from '@/lib/constants'
 import { capitalize, peso } from '@/lib/format'
 import { CITIES } from '@/lib/search'
 import { hostService } from '@/services/host'
+import { PickupPinField } from './PickupPinField'
 import { vehicleService } from '@/services/vehicles'
 import type { HostVehicle, VehicleType } from '@/types'
 
 const STEPS = ['Details', 'Pricing', 'Location', 'Registration', 'Review']
 const COLORS = ['#E9EDF0', '#1F2933', '#A7B1BA', '#C0392B', '#2E5A88', '#0D7C6B', '#FFB224', '#D35400', '#5B1A3A', '#2E7D5B']
-const CITY_CENTER: Record<string, [number, number]> = {
-  'Cebu City': [10.3157, 123.8854], 'Mandaue City': [10.3236, 123.9223], 'Lapu-Lapu City': [10.3103, 123.9494],
-  Cordova: [10.2526, 123.9493], 'Talisay City': [10.2447, 123.8494], Consolacion: [10.3766, 123.9573],
-}
 const SUGGESTED: Record<VehicleType, [number, number]> = {
   sedan: [1500, 2200], hatchback: [1200, 1600], suv: [2200, 3800], mpv: [2000, 2800], van: [3800, 5500], pickup: [2800, 3600], motorcycle: [450, 900],
 }
@@ -33,7 +29,7 @@ type Form = {
   description: string; features: string[]; photo_ids: number[]
   daily_rate: string; weekly_rate: string; min_days: string; security_deposit: string; late_fee_per_hour: string
   with_driver_available: boolean; driver_fee_per_day: string; instant_book: boolean; delivery_available: boolean; delivery_fee: string; pet_friendly: boolean
-  pickup_type: 'hub' | 'own'; hub_id: number | null; pickup_address: string; city: string; lat: number | null; lng: number | null
+  pickup_type: 'hub' | 'own'; hub_id: number | null; pickup_address: string; city: string; area: string; lat: number | null; lng: number | null
   plate_number: string; or_media_id: number | null; cr_media_id: number | null
   ctpl_media_id: number | null; ctpl_expiry: string; grace_minutes: string; fuel_policy: 'same_level' | 'full_to_full'
 }
@@ -43,7 +39,7 @@ const EMPTY: Form = {
   description: '', features: ['Air conditioning'], photo_ids: [],
   daily_rate: '', weekly_rate: '', min_days: '1', security_deposit: '3000', late_fee_per_hour: '',
   with_driver_available: false, driver_fee_per_day: '1500', instant_book: true, delivery_available: false, delivery_fee: '300', pet_friendly: false,
-  pickup_type: 'hub', hub_id: null, pickup_address: '', city: 'Cebu City', lat: null, lng: null,
+  pickup_type: 'hub', hub_id: null, pickup_address: '', city: 'Cebu City', area: '', lat: null, lng: null,
   plate_number: '', or_media_id: null, cr_media_id: null,
   ctpl_media_id: null, ctpl_expiry: '', grace_minutes: '30', fuel_policy: 'same_level',
 }
@@ -56,7 +52,7 @@ function fromVehicle(v: HostVehicle): Form {
     daily_rate: v.daily_rate ? s(v.daily_rate) : '', weekly_rate: s(v.weekly_rate), min_days: s(v.min_days), security_deposit: s(v.security_deposit), late_fee_per_hour: s(v.late_fee_per_hour),
     with_driver_available: v.with_driver_available, driver_fee_per_day: s(v.driver_fee_per_day || 1500), instant_book: v.instant_book, delivery_available: v.delivery_available,
     delivery_fee: s(v.delivery_fee || 300), pet_friendly: v.pet_friendly,
-    pickup_type: v.pickup_type, hub_id: v.hub_id, pickup_address: v.pickup_address ?? '', city: v.pickup.city ?? 'Cebu City', lat: v.lat, lng: v.lng,
+    pickup_type: v.pickup_type, hub_id: v.hub_id, pickup_address: v.pickup_address ?? '', city: v.pickup.city ?? 'Cebu City', area: v.pickup.area ?? '', lat: v.pin_lat, lng: v.pin_lng,
     plate_number: v.plate_number ?? '', or_media_id: v.or_media_id, cr_media_id: v.cr_media_id,
     ctpl_media_id: v.ctpl_media_id, ctpl_expiry: v.ctpl_expiry ?? '', grace_minutes: s(v.grace_minutes ?? 30), fuel_policy: v.fuel_policy ?? 'same_level',
   }
@@ -85,7 +81,6 @@ export function VehicleWizardSection() {
   const [status, setStatus] = useState<HostVehicle['status']>('draft')
   const [rejection, setRejection] = useState<string | null>(null)
   const [customFeature, setCustomFeature] = useState('')
-  const geo = useGeolocation()
 
   const existing = useQuery({ queryKey: ['host', 'vehicle', routeId], queryFn: () => hostService.vehicle(routeId!), enabled: !!routeId })
   const hubs = useQuery({ queryKey: ['hubs'], queryFn: vehicleService.hubs, staleTime: 600000 })
@@ -116,7 +111,9 @@ export function VehicleWizardSection() {
     }
     if (step === 2) {
       if (form.pickup_type === 'hub' && !form.hub_id) e.hub_id = 'Choose a ByaheGo hub.'
+      if (form.pickup_type === 'own' && form.lat === null) e.pin = 'Drop a pin on the map where renters pick up the car.'
       if (form.pickup_type === 'own' && !form.pickup_address.trim()) e.pickup_address = 'Enter a landmark or street where renters meet you.'
+      if (form.pickup_type === 'own' && !form.area.trim()) e.area = 'Enter the barangay or area. This is what renters see before booking.'
     }
     if (step === 3) {
       if (!form.plate_number.trim()) e.plate_number = 'Enter the plate number.'
@@ -135,11 +132,6 @@ export function VehicleWizardSection() {
     setSaving(true)
     try {
       const payload = toPayload(form)
-      if (payload.pickup_type === 'own' && (!payload.lat || !payload.lng)) {
-        const c = CITY_CENTER[form.city] ?? CITY_CENTER['Cebu City']
-        payload.lat = c[0]
-        payload.lng = c[1]
-      }
       const v = id ? await hostService.updateVehicle(id, payload) : await hostService.createVehicle(payload)
       setId(v.id)
       setStatus(v.status)
@@ -217,7 +209,7 @@ export function VehicleWizardSection() {
         <div className="p-4">
           <p className="font-bold">{form.make || 'Make'} {form.model || 'Model'} <span className="font-medium text-ink-500">{form.year}</span></p>
           <p className="text-xs text-ink-500">{typeLabel(form.type)} · {form.seats || '–'} seats · {capitalize(form.transmission)}</p>
-          <p className="mt-1 flex items-center gap-1 text-xs text-ink-500"><MapPin className="size-3.5" /> {form.pickup_type === 'hub' ? (hub ? `${hub.name}, ${hub.city}` : 'Pick-up spot not set') : form.pickup_address ? `${form.pickup_address}, ${form.city}` : 'Pick-up spot not set'}</p>
+          <p className="mt-1 flex items-center gap-1 text-xs text-ink-500"><MapPin className="size-3.5" /> {form.pickup_type === 'hub' ? (hub ? `${hub.name}, ${hub.city}` : 'Pick-up spot not set') : form.area ? `${form.area}, ${form.city}` : 'Pick-up spot not set'}</p>
           <p className="mt-3 border-t border-line-100 pt-3"><span className="text-lg font-extrabold">{form.daily_rate ? peso(Number(form.daily_rate)) : '₱—'}</span><span className="text-xs text-ink-500"> /day</span></p>
         </div>
       </div>
@@ -375,13 +367,20 @@ export function VehicleWizardSection() {
               ) : (
                 <Card className="grid gap-4 p-5 sm:grid-cols-2 sm:p-6">
                   <Select label="City" value={form.city} onChange={(e) => set('city', e.target.value)} options={CITIES.map((c) => ({ value: c, label: c }))} />
-                  <Input label="Landmark or street" value={form.pickup_address} onChange={(e) => set('pickup_address', e.target.value)} error={errors.pickup_address} placeholder="e.g. near Gaisano Mactan, Pusok" />
-                  <div className="sm:col-span-2">
-                    <Button variant="secondary" size="sm" loading={geo.loading} icon={<LocateFixed className="size-4" />} onClick={async () => { const c = await geo.request(); if (c) { set('lat', c.lat); set('lng', c.lng); toast.success('Pin set to your current location') } else toast.error('We couldn\'t get your location – we\'ll use the city center.') }}>
-                      Use my current location for the map pin
-                    </Button>
-                    <p className="mt-1.5 text-xs text-ink-500">{form.lat ? `Pin: ${form.lat.toFixed(4)}, ${form.lng?.toFixed(4)}` : `If you skip this, the pin goes to the center of ${form.city}.`}</p>
-                  </div>
+                  <PickupPinField
+                    lat={form.lat}
+                    lng={form.lng}
+                    city={form.city}
+                    error={errors.pin}
+                    onChange={(la, ln, place) => setForm((f) => ({
+                      ...f, lat: la, lng: ln,
+                      area: place?.area ?? f.area,
+                      city: place?.city && CITIES.includes(place.city) ? place.city : f.city,
+                      pickup_address: f.pickup_address || [place?.street, place?.area].filter(Boolean).join(', '),
+                    }))}
+                  />
+                  <Input label="Barangay or area (shown to renters)" value={form.area} onChange={(e) => set('area', e.target.value)} error={errors.area} placeholder="e.g. Banilad" hint="Filled in from the pin. Fix it if it's wrong." />
+                  <Input label="Meeting spot (private)" value={form.pickup_address} onChange={(e) => set('pickup_address', e.target.value)} error={errors.pickup_address} placeholder="e.g. near Gaisano Mactan, Pusok" hint="Shared only after a booking is confirmed." />
                 </Card>
               )}
             </>
@@ -406,7 +405,7 @@ export function VehicleWizardSection() {
               {[
                 { s: 0, t: 'Vehicle', rows: [[`${form.make} ${form.model} ${form.year}`, `${typeLabel(form.type)} · ${form.seats} seats · ${capitalize(form.transmission)} · ${capitalize(form.fuel)}`], ['Features', form.features.join(', ') || '—'], ['Photos', `${form.photo_ids.length} photo(s)`]] },
                 { s: 1, t: 'Pricing', rows: [['Daily rate', form.daily_rate ? peso(Number(form.daily_rate)) : '—'], ['Weekly rate', form.weekly_rate ? peso(Number(form.weekly_rate)) : '—'], ['Deposit · late fee', `${peso(Number(form.security_deposit))} · ${peso(Number(form.late_fee_per_hour))}/hour`], ['Driver', form.with_driver_available ? `${peso(Number(form.driver_fee_per_day))}/day` : 'Self-drive only']] },
-                { s: 2, t: 'Pick-up', rows: [[form.pickup_type === 'hub' ? 'ByaheGo hub' : 'Own location', form.pickup_type === 'hub' ? (hub ? `${hub.name}, ${hub.city}` : '—') : `${form.pickup_address}, ${form.city}`]] },
+                { s: 2, t: 'Pick-up', rows: [[form.pickup_type === 'hub' ? 'ByaheGo hub' : 'Own location', form.pickup_type === 'hub' ? (hub ? `${hub.name}, ${hub.city}` : '—') : `${form.area}, ${form.city} (pin ${form.lat !== null ? 'set' : 'missing'})`]] },
                 { s: 3, t: 'Registration', rows: [['Plate', form.plate_number || '—'], ['OR / CR / CTPL', form.or_media_id && form.cr_media_id && form.ctpl_media_id ? 'Uploaded ✓' : 'Missing']] },
               ].map((g) => (
                 <div key={g.t} className="p-5">

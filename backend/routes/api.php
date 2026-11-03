@@ -90,6 +90,9 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::post('vehicles/{id}/submit', [HostVehicleController::class, 'submit'])->whereNumber('id');
         Route::post('vehicles/{id}/pause', [HostVehicleController::class, 'pause'])->whereNumber('id');
         Route::post('vehicles/{id}/resume', [HostVehicleController::class, 'resume'])->whereNumber('id');
+        Route::get('vehicles/{id}/blocked-dates', [HostVehicleController::class, 'blockedDates'])->whereNumber('id');
+        Route::post('vehicles/{id}/blocked-dates', [HostVehicleController::class, 'blockDates'])->whereNumber('id');
+        Route::delete('vehicles/{id}/blocked-dates/{blockId}', [HostVehicleController::class, 'unblockDates'])->whereNumber(['id', 'blockId']);
         Route::get('bookings', [HostBookingController::class, 'index']);
         Route::get('bookings/{reference}', [HostBookingController::class, 'show']);
         Route::post('bookings/{reference}/pickup', [HostBookingController::class, 'pickup']);

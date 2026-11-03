@@ -1,15 +1,16 @@
 import { useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router'
 import { CalendarDays, LayoutGrid, Map, SearchX, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { CardGridSkeleton, ErrorState } from '@/components/common/States'
 import { VehicleCard } from '@/components/common/VehicleCard'
 import { Button, Drawer, EmptyState, Pagination, Select } from '@/components/ui'
 import { useGeolocation } from '@/hooks/useGeolocation'
+import { cn } from '@/lib/cn'
 import { formatRange, plural } from '@/lib/format'
 import { vehicleService } from '@/services/vehicles'
 import { FiltersPanel } from './FiltersPanel'
+import { AvailabilityMap } from './AvailabilityMap'
 import { useVehicleSearch } from './useVehicleSearch'
 
 const SORTS = [
@@ -22,7 +23,8 @@ const SORTS = [
 ]
 
 export function BrowseSection() {
-  const { get, set, apiFilters, activeCount, clearFilters, tripQuery, params } = useVehicleSearch()
+  const { get, set, apiFilters, activeCount, clearFilters, tripQuery } = useVehicleSearch()
+  const view = get('view') === 'map' ? 'map' : 'list'
   const [filtersOpen, setFiltersOpen] = useState(false)
   const geo = useGeolocation()
 
@@ -30,6 +32,7 @@ export function BrowseSection() {
     queryKey: ['vehicles', apiFilters],
     queryFn: () => vehicleService.list(apiFilters),
     placeholderData: keepPreviousData,
+    enabled: view === 'list', // the map asks for its own data
   })
 
   const changeSort = async (sort: string) => {
@@ -39,15 +42,14 @@ export function BrowseSection() {
         toast.error('Allow location access to sort by distance, or choose a city in the search bar.')
         return
       }
-      set({ sort, lat: c.lat.toFixed(5), lng: c.lng.toFixed(5) })
+      set({ sort, lat: c.lat.toFixed(5), lng: c.lng.toFixed(5), place: 'My location', radius: get('radius') || null })
       return
     }
-    set({ sort, lat: null, lng: null })
+    set({ sort })
   }
 
   const location = get('location')
   const hasDates = !!apiFilters.pickup_at
-  const mapLink = `/vehicles/map?${params.toString()}`
 
   return (
     <section className="container-page py-6 lg:py-8">
@@ -65,7 +67,7 @@ export function BrowseSection() {
                 {location ? `Vehicles in ${location}` : 'Vehicles across Cebu'}
               </h1>
               <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-ink-500">
-                {data ? `${plural(data.meta.total, 'vehicle')} ${hasDates ? 'free for your dates' : 'available'}` : 'Finding vehicles…'}
+                {view === 'map' ? (hasDates ? 'Live availability for your dates' : 'Live availability right now') : data ? `${plural(data.meta.total, 'vehicle')} ${hasDates ? 'free for your dates' : 'available'}` : 'Finding vehicles…'}
                 {hasDates && (
                   <span className="inline-flex items-center gap-1 font-medium text-ink-700">
                     <CalendarDays className="size-3.5" /> {formatRange(get('pickup'), get('return'))}
@@ -77,26 +79,34 @@ export function BrowseSection() {
               <Button variant="secondary" size="sm" className="lg:hidden" icon={<SlidersHorizontal className="size-4" />} onClick={() => setFiltersOpen(true)}>
                 Filters{activeCount > 0 && ` (${activeCount})`}
               </Button>
-              <Select
-                aria-label="Sort vehicles"
-                value={get('sort') || 'recommended'}
-                onChange={(e) => void changeSort(e.target.value)}
-                options={SORTS}
-                className="h-9 w-48 rounded-lg text-sm"
-              />
-              <div className="hidden rounded-lg border border-line-200 bg-white p-0.5 sm:flex">
-                <span className="flex h-8 items-center gap-1.5 rounded-md bg-ink-900 px-3 text-xs font-semibold text-white">
-                  <LayoutGrid className="size-3.5" /> Grid
-                </span>
-                <Link to={mapLink} className="flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold text-ink-700 hover:bg-line-100">
-                  <Map className="size-3.5" /> Map
-                </Link>
+              {view === 'list' && (
+                <Select
+                  aria-label="Sort vehicles"
+                  value={apiFilters.sort as string}
+                  onChange={(e) => void changeSort(e.target.value)}
+                  options={SORTS}
+                  className="h-9 w-48 rounded-lg text-sm"
+                />
+              )}
+              <div className="flex rounded-lg border border-line-200 bg-white p-0.5" role="group" aria-label="Show as list or map">
+                {([['list', LayoutGrid, 'List'], ['map', Map, 'Map']] as const).map(([v, Icon, label]) => (
+                  <button
+                    key={v}
+                    aria-pressed={view === v}
+                    onClick={() => set({ view: v === 'map' ? 'map' : null }, true)}
+                    className={cn('flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold', view === v ? 'bg-ink-900 text-white' : 'text-ink-700 hover:bg-line-100')}
+                  >
+                    <Icon className="size-3.5" /> {label}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
 
-          {isLoading ? (
-            <CardGridSkeleton count={9} />
+          {view === 'map' ? (
+            <AvailabilityMap />
+          ) : isLoading ? (
+            <CardGridSkeleton count={12} />
           ) : error ? (
             <ErrorState error={error} onRetry={() => void refetch()} />
           ) : data && data.data.length === 0 ? (

@@ -31,7 +31,7 @@ export function SiteHeader() {
         <nav className="ml-4 hidden items-center gap-1 xl:flex">
           {[
             { to: '/vehicles', label: 'Browse' },
-            { to: '/vehicles/map', label: 'Live map' },
+            { to: '/vehicles?view=map', label: 'Live map' },
             { to: '/how-it-works', label: 'How it works' },
           ].map((l) => (
             <NavLink key={l.to} to={l.to} end className={({ isActive }) => cn('rounded-lg px-3 py-2 text-sm font-semibold transition', isActive ? 'text-brand' : 'text-ink-700 hover:text-ink-900')}>
@@ -86,7 +86,7 @@ export function SiteHeader() {
           {[
             { to: '/', label: 'Home' },
             { to: '/vehicles', label: 'Browse vehicles' },
-            { to: '/vehicles/map', label: 'Live availability map', icon: Map },
+            { to: '/vehicles?view=map', label: 'Live availability map', icon: Map },
             { to: '/how-it-works', label: 'How it works' },
             { to: hostLink.to, label: hostLink.label },
           ].map((l) => (

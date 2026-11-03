@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
-import { Camera, CalendarClock, Eye, Pause, Pencil, Play, Plus, Search, Send, Tag, Trash2 } from 'lucide-react'
+import { Camera, CalendarClock, CalendarOff, Eye, Pause, Pencil, Play, Plus, Search, Send, Tag, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { ErrorState, ListSkeleton } from '@/components/common/States'
@@ -9,6 +9,7 @@ import { StatusBadge } from '@/components/common/StatusBadge'
 import { VehicleArt } from '@/components/common/VehicleArt'
 import { VehicleImage } from '@/components/common/VehicleImage'
 import { Alert, Button, Card, Input, Tabs } from '@/components/ui'
+import { BlockedDatesModal } from './BlockedDatesModal'
 import { useDebounce } from '@/hooks/useDebounce'
 import { getErrorMessage } from '@/lib/api'
 import { formatDate, peso } from '@/lib/format'
@@ -23,6 +24,7 @@ export function HostVehiclesSection() {
   const dq = useDebounce(q)
   const qc = useQueryClient()
   const [toDelete, setToDelete] = useState<HostVehicle | null>(null)
+  const [blocking, setBlocking] = useState<HostVehicle | null>(null)
   const { data, isLoading, error, refetch } = useQuery({ queryKey: ['host', 'vehicles', tab, dq], queryFn: () => hostService.vehicles({ status: tab === 'all' ? undefined : tab, q: dq || undefined }) })
 
   const act = useMutation({
@@ -93,6 +95,7 @@ export function HostVehiclesSection() {
               <div className="flex flex-wrap gap-2">
                 {v.status === 'live' && <Button size="sm" variant="ghost" icon={<Eye className="size-4" />} to={`/vehicles/${v.id}`}>View</Button>}
                 <Button size="sm" variant="secondary" icon={<Pencil className="size-4" />} to={`/host/vehicles/${v.id}/edit`}>Edit</Button>
+                {['live', 'paused'].includes(v.status) && <Button size="sm" variant="secondary" icon={<CalendarOff className="size-4" />} onClick={() => setBlocking(v)}>Block dates</Button>}
                 {v.status === 'live' && <Button size="sm" variant="secondary" icon={<Pause className="size-4" />} onClick={() => act.mutate({ id: v.id, action: 'pause' })}>Pause</Button>}
                 {v.status === 'paused' && <Button size="sm" icon={<Play className="size-4" />} onClick={() => act.mutate({ id: v.id, action: 'resume' })}>Resume</Button>}
                 {['draft', 'rejected'].includes(v.status) && <Button size="sm" icon={<Send className="size-4" />} onClick={() => act.mutate({ id: v.id, action: 'submit' })}>Submit</Button>}
@@ -102,6 +105,7 @@ export function HostVehiclesSection() {
           ))}
         </div>
       )}
+      <BlockedDatesModal vehicleId={blocking?.id ?? null} vehicleName={blocking?.name ?? ''} onClose={() => setBlocking(null)} />
       <ConfirmDialog open={!!toDelete} onClose={() => setToDelete(null)} title={`Delete ${toDelete?.name ?? 'this vehicle'}?`} description="This can't be undone." tone="danger" confirmLabel="Delete" loading={act.isPending} onConfirm={() => toDelete && act.mutate({ id: toDelete.id, action: 'delete' })} />
       <p className="mt-6 text-center text-xs text-ink-400">Need help with a listing? <Link to="/help#contact" className="font-semibold text-brand">Contact host support</Link></p>
     </section>

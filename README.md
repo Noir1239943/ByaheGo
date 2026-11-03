@@ -103,7 +103,25 @@ cp .env.example .env                    # VITE_API_URL=http://localhost:8000
 npm run dev                             # http://localhost:5173
 ```
 
-Tests: `cd backend && php artisan test` (28 feature tests: auth, Google sign-in, server-side filters & pagination, availability, booking & payment, declined cards, 24-hour cancellation rule, refunds, late fees, damage/theft disputes, verification checks, host application & listing approval, suspensions, settings).
+Tests: `cd backend && php artisan test` (72 feature tests, run on an in-memory SQLite database so they never touch Neon: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, booking & payment, declined cards, 24-hour cancellation rule, refunds, late fees, damage/theft disputes, verification checks, host application & listing approval, suspensions, settings).
+
+---
+
+## Finding cars: search, location and the live map
+
+**Search is done in the database.** `GET /api/vehicles` validates every query parameter (a bad value is a clear 422, never silently ignored) and filters in SQL: place text, dates, price range, type, transmission, seats, fuel, keyword and distance. Sorting: recommended, price low/high, rating, newest, nearest. Pages are 12 cars, with `meta` (total, current page, last page). The page, filters and sort live in the URL, so a link can be shared and survives a refresh. Indexes cover the filtered columns (`status` + price/type/transmission/fuel/seats/city, and `lat, lng`), plus the booking date window.
+
+**Dates.** A car is shown for a date range only when it has no confirmed or active booking that overlaps, and the host has not blocked any of those days (hosts do that under *My vehicles → Block dates*).
+
+**Nearest pick-up.** Hosts place a pin on a Leaflet map (click, drag, search an address, or use their location). The address search uses OpenStreetMap Nominatim the way its usage policy asks: debounced, at most one request per second from a shared queue, results cached, Philippines only, and the browser's Referer identifies the site (optionally set `VITE_NOMINATIM_EMAIL`). Renters tap *Use my location* or pick an area, then choose a radius (2–50 km); cards show "2.4 km away".
+
+*Distance choice.* The SQL does a bounding-box pre-filter on the indexed `lat, lng` columns, then an exact radius check with a flat-earth (equirectangular) formula that runs unchanged on Postgres and on SQLite, so the tests exercise the same query as production. Within a city it is within 0.1% of Haversine. The kilometres shown on a card are computed with Haversine in PHP.
+
+**Privacy of the pin.** For a host's own location the search, the cards, the map and the car page only ever get the barangay/area and a point rounded to 0.01 degree (about 1 km), and sorting and radius use that rounded point too, so repeated searches cannot be used to find the house. The exact pin, address and meeting spot are copied into the booking when it is confirmed and are shown to that renter and the host. If the renter cancels, they go back to seeing only the area. ByaheGo hubs are public places, so their exact location is always shown.
+
+**List / Map toggle.** The same page switches between the grid and a map (`/vehicles?view=map`) with the same filters and dates. Markers show the price and are coloured: green available, amber on a trip right now, red unavailable for the dates. *Available* means: live listing, host not suspended, no overlapping booking and no blocked day. The map refetches every 30 seconds while the tab is visible, stops while it is hidden, and refreshes when you come back ("Updated just now").
+
+*Making it fully real-time later.* We deliberately use polling, not websockets. With Laravel Reverb the API would broadcast a `VehicleAvailabilityChanged` event (from `BookingService`, the host's block/unblock and pause actions, and the account blocking service) on a public `availability` channel; the map would subscribe with Laravel Echo and update just that marker instead of polling. Reverb is a separate long-running process, so it needs a host that runs one (a paid Render service or a small VPS), and a free Render web service cannot keep websocket workers alive.
 
 ---
 

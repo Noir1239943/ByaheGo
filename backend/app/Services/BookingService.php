@@ -58,8 +58,7 @@ class BookingService
         return DB::transaction(function () use ($renter, $vehicle, $data, $pickup, $return, $rentalType, $ip) {
             // Lock the vehicle row so two renters can't grab the same dates at once.
             $vehicle = Vehicle::whereKey($vehicle->id)->lockForUpdate()->firstOrFail();
-            $clash = $vehicle->bookings()->blocking()->where('pickup_at', '<', $return)->where('return_at', '>', $pickup)->exists();
-            if ($clash) {
+            if (! $vehicle->isFreeBetween($pickup, $return)) {
                 throw ValidationException::withMessages(['pickup_at' => 'Sorry, someone just booked these dates. Please pick different dates.']);
             }
             $quote = $this->pricing->quote($vehicle, $pickup, $return, $rentalType, $data['protection_plan'] ?? 'standard');
@@ -86,9 +85,10 @@ class BookingService
                 'status' => 'confirmed',
                 'payment_status' => 'paid',
                 'deposit_status' => 'held',
-                'pickup_label' => $vehicle->pickupLabel(),
-                'pickup_lat' => $vehicle->pickup_type === 'hub' && $vehicle->hub ? $vehicle->hub->lat : $vehicle->lat,
-                'pickup_lng' => $vehicle->pickup_type === 'hub' && $vehicle->hub ? $vehicle->hub->lng : $vehicle->lng,
+                // The booking keeps the exact pick-up spot; it is only shown to the renter and host (see Present::booking).
+                'pickup_label' => $vehicle->pickupLabel(true),
+                'pickup_lat' => $vehicle->lat,
+                'pickup_lng' => $vehicle->lng,
                 'driver_name' => $data['driver_name'] ?? $renter->name,
                 'driver_phone' => $data['driver_phone'] ?? $renter->phone,
                 'driver_email' => $data['driver_email'] ?? $renter->email,

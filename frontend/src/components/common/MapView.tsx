@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet'
+import { Circle, MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { Link } from 'react-router'
 import { peso } from '@/lib/format'
@@ -53,6 +53,10 @@ export default function MapView({ vehicles, activeId, onSelect, className, query
           <Popup>You are here</Popup>
         </Marker>
       )}
+      {/* Own-location pins are rounded to about 1 km, so show the area they stand for instead of a precise point. */}
+      {placed.filter(({ v }) => v.pickup_type === 'own' && (placed.length === 1 || activeId === v.id)).map(({ v, pos }) => (
+        <Circle key={`area-${v.id}`} center={pos} radius={700} pathOptions={{ color: '#0D7C6B', weight: 1.5, fillColor: '#0D7C6B', fillOpacity: 0.12 }} interactive={false} />
+      ))}
       {placed.map(({ v, pos }) => (
         <Marker
           key={v.id}
@@ -64,9 +68,10 @@ export default function MapView({ vehicles, activeId, onSelect, className, query
           <Popup>
             <div className="w-48">
               <p className="font-bold text-ink-900">{v.name}</p>
-              <p className="text-xs text-ink-500">{v.location_label}</p>
+              <p className="text-xs text-ink-500">{v.location_label}{v.pickup_type === 'own' && ' · exact spot shared after booking'}</p>
+              {typeof v.distance_km === 'number' && <p className="text-xs text-ink-500">{v.distance_km < 1 ? 'Less than 1 km away' : `${v.distance_km} km away`}</p>}
               <p className="mt-1 text-xs font-semibold" style={{ color: COLORS[v.availability ?? 'available'] === COLORS.on_trip ? '#B7791F' : COLORS[v.availability ?? 'available'] }}>
-                {v.availability === 'booked' ? 'Booked for your dates' : v.availability === 'on_trip' ? 'On a trip right now' : 'Available'}
+                {v.availability === 'booked' ? 'Unavailable for your dates' : v.availability === 'on_trip' ? 'On a trip right now' : 'Available'}
               </p>
               <Link to={`/vehicles/${v.id}${query}`} className="mt-2 inline-block text-sm font-bold text-brand">
                 {peso(v.daily_rate)}/day · View →

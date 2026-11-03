@@ -92,6 +92,8 @@ class Present
             'rating_count' => $v->rating_count,
             'trips_count' => $v->trips_count,
             'city' => $v->pickup_type === 'hub' && $v->hub ? $v->hub->city : $v->city,
+            'area' => $v->isOwnPickup() ? ($v->area ?: $v->city) : $v->hub->name,
+            'pickup_type' => $v->isOwnPickup() ? 'own' : 'hub',
             'location_label' => $v->pickupLabel(),
             'instant_book' => $v->instant_book,
             'with_driver_available' => $v->with_driver_available,
@@ -99,8 +101,9 @@ class Present
             'delivery_available' => $v->delivery_available,
             'pet_friendly' => $v->pet_friendly,
             'photo' => $photo ? self::mediaUrl($photo->media_id) : null,
-            'lat' => $v->pickup_type === 'hub' && $v->hub ? $v->hub->lat : $v->lat,
-            'lng' => $v->pickup_type === 'hub' && $v->hub ? $v->hub->lng : $v->lng,
+            // Own-location pins are rounded to about 1 km. The exact pin is only in the booking and the host's own listing.
+            'lat' => $v->publicLat(),
+            'lng' => $v->publicLng(),
         ], $extra);
     }
 
@@ -122,8 +125,10 @@ class Present
                 'type' => $v->pickup_type,
                 'label' => $v->pickupLabel(),
                 'hub' => $v->hub ? $v->hub->only(['id', 'name', 'address', 'city', 'lat', 'lng', 'hours', 'parking_notes']) : null,
-                'address' => $v->pickup_address,
+                'address' => null, // the street address is released with a confirmed booking
                 'city' => $v->city,
+                'area' => $v->area,
+                'approximate' => $v->isOwnPickup(),
             ],
             'host' => [
                 'id' => $host->id,
@@ -153,6 +158,8 @@ class Present
             'pickup_type' => $v->pickup_type,
             'hub_id' => $v->hub_id,
             'pickup_address' => $v->pickup_address,
+            'pin_lat' => $v->lat,
+            'pin_lng' => $v->lng,
             'or_media_id' => $v->or_media_id,
             'cr_media_id' => $v->cr_media_id,
             'ctpl_media_id' => $v->ctpl_media_id,
@@ -240,6 +247,7 @@ class Present
         $b->loadMissing(['vehicle.hub', 'vehicle.photos', 'renter', 'host', 'payments.booking', 'inspections', 'incidents.reporter', 'review']);
         $plan = Protection::get($b->protection_plan);
         $service = app(BookingService::class);
+        $hideExactPickup = $b->status === 'cancelled' && $viewer === 'renter';
         $data = [
             'id' => $b->id,
             'reference' => $b->reference,
@@ -267,9 +275,10 @@ class Present
             'damage_charge' => $b->damage_charge,
             'balance_due' => $b->balance_due,
             'deposit_refunded' => $b->deposit_refunded,
-            'pickup_label' => $b->pickup_label,
-            'pickup_lat' => $b->pickup_lat,
-            'pickup_lng' => $b->pickup_lng,
+            // The exact pick-up spot is only for a trip that is still on or done. A cancelled own-location trip falls back to the public area.
+            'pickup_label' => $hideExactPickup ? $b->vehicle->pickupLabel() : $b->pickup_label,
+            'pickup_lat' => $hideExactPickup ? $b->vehicle->publicLat() : $b->pickup_lat,
+            'pickup_lng' => $hideExactPickup ? $b->vehicle->publicLng() : $b->pickup_lng,
             'driver' => ['name' => $b->driver_name, 'phone' => $b->driver_phone, 'email' => $b->driver_email, 'license_no' => $b->driver_license_no],
             'payment_method' => $b->payment_method,
             'payment_method_label' => PaymentGateway::METHODS[$b->payment_method] ?? $b->payment_method,

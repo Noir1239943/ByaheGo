@@ -126,7 +126,7 @@ export function VehicleDetailSection() {
 
           <div>
             <h2 className="text-xl font-bold">Where you'll pick it up</h2>
-            <p className="mt-1 text-sm text-ink-500">{v.pickup.type === 'hub' ? 'A staffed ByaheGo hub – easy to find, with parking.' : 'Your host meets you here. The exact spot is shared after booking.'}</p>
+            <p className="mt-1 text-sm text-ink-500">{v.pickup.type === 'hub' ? 'A staffed ByaheGo hub – easy to find, with parking.' : `Your host meets you in ${v.pickup.area ?? v.pickup.city ?? 'this area'}. The map shows the general area; the exact spot is shared once your booking is confirmed.`}</p>
             <div className="mt-4 grid gap-4 md:grid-cols-[1fr_260px]">
               <div className="h-64 overflow-hidden rounded-2xl border border-line-200">
                 <Suspense fallback={<Skeleton className="h-full w-full" />}>

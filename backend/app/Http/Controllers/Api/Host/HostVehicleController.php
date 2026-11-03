@@ -6,8 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\Hub;
 use App\Models\Media;
 use App\Models\Vehicle;
+use App\Models\VehicleBlockedDate;
 use App\Support\Notifier;
 use App\Support\Present;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -69,8 +71,10 @@ class HostVehicleController extends Controller
             'hub_id' => ['nullable', 'integer', 'exists:hubs,id'],
             'pickup_address' => ['nullable', 'string', 'max:200'],
             'city' => ['nullable', 'string', 'max:80'],
-            'lat' => ['nullable', 'numeric', 'between:-90,90'],
-            'lng' => ['nullable', 'numeric', 'between:-180,180'],
+            'area' => ['nullable', 'string', 'max:120'],
+            // The pin must be somewhere in the Philippines, so a stray tap on the map can't put a car in the ocean.
+            'lat' => ['nullable', 'numeric', 'between:4.5,21.5'],
+            'lng' => ['nullable', 'numeric', 'between:116,127'],
             'photo_ids' => ['nullable', 'array', 'max:12'],
             'photo_ids.*' => ['integer', Rule::exists('media', 'id')->where('user_id', $user->id)->where('purpose', 'vehicle_photo')],
             'or_media_id' => $ownMedia('vehicle_or'),
@@ -88,6 +92,12 @@ class HostVehicleController extends Controller
         unset($data['photo_ids']);
         foreach (['daily_rate', 'driver_fee_per_day', 'delivery_fee', 'security_deposit', 'late_fee_per_hour', 'min_days', 'grace_minutes', 'fuel_policy'] as $k) {
             if (array_key_exists($k, $data) && $data[$k] === null) unset($data[$k]);
+        }
+        // Switching from a hub to your own place drops the hub's coordinates: the host has to place a pin.
+        if (($data['pickup_type'] ?? null) === 'own' && $vehicle->pickup_type === 'hub' && ! isset($data['lat'])) {
+            $data['lat'] = null;
+            $data['lng'] = null;
+            $data['hub_id'] = null;
         }
         if (($data['pickup_type'] ?? $vehicle->pickup_type) === 'hub' && ! empty($data['hub_id'])) {
             $hub = Hub::find($data['hub_id']);
@@ -130,6 +140,7 @@ class HostVehicleController extends Controller
         $missing = [];
         if ($vehicle->daily_rate < 300) $missing[] = 'a daily rate (at least ₱300)';
         if ($vehicle->pickup_type === 'hub' ? ! $vehicle->hub_id : ! ($vehicle->pickup_address && $vehicle->city)) $missing[] = 'a pick-up location';
+        if ($vehicle->pickup_type !== 'hub' && ($vehicle->lat === null || $vehicle->lng === null)) $missing[] = 'a pin for the pick-up spot on the map';
         if (! $vehicle->plate_number) $missing[] = 'the plate number';
         if ($vehicle->photos->count() < 3) $missing[] = 'at least 3 photos of the car';
         if (! $vehicle->or_media_id || ! $vehicle->cr_media_id) $missing[] = 'photos of the OR and CR';
@@ -158,6 +169,40 @@ class HostVehicleController extends Controller
         if ($vehicle->status !== 'paused') throw ValidationException::withMessages(['status' => 'This listing isn\'t paused.']);
         $vehicle->update(['status' => 'live']);
         return response()->json(Present::hostVehicle($vehicle->fresh(['hub', 'photos', 'host'])));
+    }
+
+    public function blockedDates(Request $request, int $id)
+    {
+        $vehicle = $this->own($request, $id);
+        return response()->json(['data' => $vehicle->blockedDates()->where('ends_on', '>=', today())->get()->map(fn ($d) => $this->blockedRow($d))->values()]);
+    }
+
+    public function blockDates(Request $request, int $id)
+    {
+        $vehicle = $this->own($request, $id);
+        $data = $request->validate([
+            'starts_on' => ['required', 'date', 'after_or_equal:today'],
+            'ends_on' => ['required', 'date', 'after_or_equal:starts_on', 'before:+2 years'],
+            'reason' => ['nullable', 'string', 'max:120'],
+        ], ['starts_on.after_or_equal' => 'Pick a date from today onwards.', 'ends_on.after_or_equal' => 'The last day must not be before the first day.']);
+        $from = Carbon::parse($data['starts_on'])->startOfDay();
+        $to = Carbon::parse($data['ends_on'])->endOfDay();
+        if ($vehicle->bookings()->blocking()->where('pickup_at', '<', $to)->where('return_at', '>', $from)->exists()) {
+            throw ValidationException::withMessages(['starts_on' => 'A renter has already booked some of these days. Those trips need to be cancelled or finished first.']);
+        }
+        $row = $vehicle->blockedDates()->create($data);
+        return response()->json($this->blockedRow($row), 201);
+    }
+
+    public function unblockDates(Request $request, int $id, int $blockId)
+    {
+        $this->own($request, $id)->blockedDates()->whereKey($blockId)->firstOrFail()->delete();
+        return response()->json(['ok' => true]);
+    }
+
+    protected function blockedRow(VehicleBlockedDate $d): array
+    {
+        return ['id' => $d->id, 'starts_on' => $d->starts_on->toDateString(), 'ends_on' => $d->ends_on->toDateString(), 'reason' => $d->reason];
     }
 
     public function destroy(Request $request, int $id)

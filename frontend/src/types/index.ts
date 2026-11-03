@@ -64,6 +64,9 @@ export interface VehicleCard {
   rating_count: number
   trips_count: number
   city: string | null
+  /** Barangay or hub name – the only place name shown before booking. */
+  area?: string | null
+  pickup_type?: 'hub' | 'own'
   location_label: string
   instant_book: boolean
   with_driver_available: boolean
@@ -109,7 +112,7 @@ export interface VehicleDetail extends VehicleCard {
   delivery_fee: number
   min_days: number
   status: string
-  pickup: { type: 'hub' | 'own'; label: string; hub: Hub | null; address: string | null; city: string | null }
+  pickup: { type: 'hub' | 'own'; label: string; hub: Hub | null; address: string | null; city: string | null; area: string | null; approximate: boolean }
   host: { id: number; name: string; initials: string; joined_at: string | null; trips: number; verified: boolean; vehicles: number }
   policies: {
     cancellation_cutoff_hours: number
@@ -132,6 +135,9 @@ export interface HostVehicle extends Omit<VehicleDetail, 'is_favorite' | 'review
   pickup_type: 'hub' | 'own'
   hub_id: number | null
   pickup_address: string | null
+  /** The exact pin. Only the host ever receives this. */
+  pin_lat: number | null
+  pin_lng: number | null
   or_media_id: number | null
   cr_media_id: number | null
   ctpl_media_id: number | null

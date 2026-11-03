@@ -129,7 +129,8 @@ class DatabaseSeeder extends Seeder
     {
         $carFeatures = ['Air conditioning', 'Bluetooth audio', 'USB charging', 'Backup camera', 'Dash cam', 'Apple CarPlay', 'Android Auto', 'Child seat anchors', 'Keyless entry', 'Cruise control', 'Roof rack', 'Spare tire & tools'];
         $hub = fn ($name) => ['pickup_type' => 'hub', 'hub_id' => $this->hubs[$name]->id, 'city' => $this->hubs[$name]->city, 'lat' => $this->hubs[$name]->lat, 'lng' => $this->hubs[$name]->lng];
-        $own = fn ($address, $city, $lat, $lng) => ['pickup_type' => 'own', 'pickup_address' => $address, 'city' => $city, 'lat' => $lat, 'lng' => $lng];
+        // The public area is the barangay part of the address (the part that is not a landmark), never the street.
+        $own = fn ($address, $city, $lat, $lng) => ['pickup_type' => 'own', 'pickup_address' => $address, 'city' => $city, 'area' => (collect(explode(',', $address))->map(fn ($p) => trim($p))->reject(fn ($p) => str_starts_with($p, 'near '))->last()) ?: $city, 'lat' => $lat, 'lng' => $lng];
 
         $list = [
             ['Host123', 'Toyota', 'Fortuner', 2023, 'suv', 'automatic', 'diesel', 7, 'Pearl White', '#E9EDF0', 3200, $hub('Ayala Center Cebu Hub'), ['driver' => 1500, 'deposit' => 5000, 'plate' => 'NBC 4821', 'weekly' => 19800],
