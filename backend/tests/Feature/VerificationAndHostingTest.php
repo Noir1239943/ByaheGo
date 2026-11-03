@@ -378,7 +378,7 @@ class VerificationAndHostingTest extends TestCase
     public function test_host_application_validates_and_encrypts_payout_details(): void
     {
         $u = $this->verifiedRenter();
-        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['payout_method' => 'maya']))->assertStatus(422)->assertJsonValidationErrors('payout_method');
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['payout_method' => 'paypal']))->assertStatus(422)->assertJsonValidationErrors('payout_method');
         $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['payout_method' => 'bank']))->assertStatus(422)->assertJsonValidationErrors('payout_bank');
         $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['phone' => '12345']))->assertStatus(422)->assertJsonValidationErrors('phone');
         $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['address' => '']))->assertStatus(422)->assertJsonValidationErrors('address');

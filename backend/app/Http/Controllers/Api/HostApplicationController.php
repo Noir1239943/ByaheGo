@@ -41,7 +41,7 @@ class HostApplicationController extends Controller
             'vehicle_types' => ['required', 'array', 'min:1'],
             'vehicle_types.*' => [Rule::in(['sedan', 'hatchback', 'suv', 'mpv', 'van', 'pickup', 'motorcycle'])],
             'business_name' => ['nullable', 'string', 'max:100'],
-            'payout_method' => ['required', Rule::in(['gcash', 'bank'])],
+            'payout_method' => ['required', Rule::in(['gcash', 'maya', 'bank'])],
             'payout_bank' => ['required_if:payout_method,bank', 'nullable', 'string', 'max:60'],
             'payout_account_name' => ['required', 'string', 'max:80'],
             'payout_account_number' => ['required', 'string', 'min:6', 'max:30'],

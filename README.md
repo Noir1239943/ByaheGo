@@ -85,16 +85,15 @@ export default function HomePage() {
 
 ## Run it locally
 
-**Requirements:** PHP 8.3+ with `pdo_sqlite` (or `pdo_pgsql`) and the `gd` + `fileinfo` extensions (uncomment `extension=gd` and `extension=fileinfo` in `php.ini`), Composer 2, Node 20+.
+**Requirements:** PHP 8.3+ with `pdo_pgsql`, `gd` and `fileinfo` (in `php.ini` uncomment `extension=pdo_pgsql`, `extension=pgsql`, `extension=gd`, `extension=fileinfo`; add `extension=pdo_sqlite` too if you want to run the tests), Composer 2, Node 20+, and a free [Neon](https://neon.tech) project (the app uses Postgres everywhere, there is no local database file).
 
 ```bash
 # 1) API
 cd backend
 composer install
-cp .env.example .env
+cp .env.example .env                    # then paste your Neon DIRECT connection string into DB_URL
 php artisan key:generate
-touch database/database.sqlite          # Windows: type nul > database\database.sqlite
-php artisan migrate --seed
+php artisan migrate:fresh --seed        # creates the schema and all demo data in Neon (takes a few minutes over the network)
 php artisan serve                       # http://localhost:8000
 
 # 2) Website (new terminal)
@@ -108,6 +107,20 @@ Tests: `cd backend && php artisan test` (28 feature tests: auth, Google sign-in,
 
 ---
 
+## Database size (photos live in Postgres)
+
+Photos are compressed in the browser (max 1600 px, JPEG 82%), so one photo is about 250–400 KB, or 350–530 KB once base64-encoded in the database.
+
+| What | Photos | Approx. size |
+|---|---|---|
+| One renter's ID check (front, back, live selfie) | 3 | ~1.2 MB |
+| One listing (4 photos + OR + CR + CTPL) | 7–8 | ~3 MB |
+| One trip's pickup and return inspection (about 8 + 8 photos) | ~16 | ~6 MB |
+
+Neon's free plan stores 0.5 GB (about 500 MB). That is roughly 150 listings, or 400 ID checks, or 80 fully photographed trips, and a mix of them fills it sooner. Plan to move to a paid Neon plan, or to object storage for photos (S3, Cloudflare R2 or Supabase Storage, keeping only the URL in the database), before real traffic. The demo seed data alone uses a few tens of MB.
+
+---
+
 ## Deploy (same as last time: Neon → Render → Vercel)
 
 You can push this folder as **one GitHub repo** (Render uses `backend/`, Vercel uses `frontend/`) or as two repos (push each folder separately – then skip the "Root Directory" settings).
@@ -116,6 +129,8 @@ You can push this folder as **one GitHub repo** (Render uses `backend/`, Vercel 
 1. Create a project at neon.tech (region: Singapore).
 2. Copy the connection string (Dashboard → Connect), e.g.
    `postgresql://neondb_owner:xxxx@ep-xxxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require`
+   **Turn "Connection pooling" off before copying**, so the host has no `-pooler` in it. Laravel's migrations fail through Neon's pooler (the first statement aborts the transaction). The direct connection is fine for this app's size.
+3. Photos are stored in the database as base64, so watch the storage meter (free plan: 0.5 GB). See "Database size" below.
 
 ### 2. API – Render
 1. New → **Web Service** → connect the repo → **Runtime: Docker**, **Root Directory: `backend`**, Instance type: Free.

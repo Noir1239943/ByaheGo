@@ -119,7 +119,7 @@ export function HostApplicationSection() {
         <Card>
           <CardHeader title="Where should we send your earnings?" description="Payouts are sent 3 days after each completed trip. We store your account number encrypted." />
           <CardBody className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Select label="Payout method" value={form.payout_method} onChange={f('payout_method')} options={[{ value: 'gcash', label: 'GCash' }, { value: 'bank', label: 'Bank transfer' }]} error={errors.payout_method} />
+            <Select label="Payout method" value={form.payout_method} onChange={f('payout_method')} options={[{ value: 'gcash', label: 'GCash' }, { value: 'maya', label: 'Maya' }, { value: 'bank', label: 'Bank transfer' }]} error={errors.payout_method} />
             {form.payout_method === 'bank' && <Input label="Bank name" value={form.payout_bank} onChange={f('payout_bank')} error={errors.payout_bank} placeholder="e.g. BDO" />}
             <Input label="Account name" value={form.payout_account_name} onChange={f('payout_account_name')} error={errors.payout_account_name} />
             <Input label={form.payout_method === 'bank' ? 'Account number' : 'Mobile number'} value={form.payout_account_number} onChange={f('payout_account_number')} error={errors.payout_account_number} />
