@@ -23,7 +23,7 @@ class MediaController extends Controller
     {
         $data = $request->validate([
             'file' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:8192'],
-            'purpose' => ['required', Rule::in(['vehicle_photo', 'license_front', 'license_back', 'selfie', 'vehicle_or', 'vehicle_cr', 'incident', 'inspection'])],
+            'purpose' => ['required', Rule::in(['vehicle_photo', 'license_front', 'license_back', 'selfie', 'vehicle_or', 'vehicle_cr', 'vehicle_ctpl', 'incident', 'inspection'])],
         ], [
             'file.mimes' => 'Please upload a JPG, PNG or WEBP photo.',
             'file.max' => 'That photo is too large. Please use one under 8 MB.',
@@ -73,8 +73,8 @@ class MediaController extends Controller
         if ($media->visibility !== 'public') {
             $user = Auth::guard('sanctum')->user();
             $allowed = $user && ($user->isAdmin() || $user->id === $media->user_id);
-            if (! $allowed && $user && in_array($media->purpose, ['vehicle_or', 'vehicle_cr'], true)) {
-                $allowed = Vehicle::where('host_id', $user->id)->where(fn ($q) => $q->where('or_media_id', $id)->orWhere('cr_media_id', $id))->exists();
+            if (! $allowed && $user && in_array($media->purpose, ['vehicle_or', 'vehicle_cr', 'vehicle_ctpl'], true)) {
+                $allowed = Vehicle::where('host_id', $user->id)->where(fn ($q) => $q->where('or_media_id', $id)->orWhere('cr_media_id', $id)->orWhere('ctpl_media_id', $id))->exists();
             }
             if (! $allowed) abort(404);
         }

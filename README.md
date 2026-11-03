@@ -29,7 +29,7 @@ You can also log in with the email (e.g. `test123@byahego.test`). Other seeded r
 
 | Question / gap | How ByaheGo handles it |
 |---|---|
-| Sign in with Google (Apple & magic links excluded) | **Continue with Google** on login/register (Google Identity Services). The API verifies the Google ID token and links accounts by email. Needs a Google Client ID – see *Google sign-in setup*. |
+| Sign in with Google (Apple & magic links excluded) | **Continue with Google / Facebook** on login/register (Laravel Socialite redirect flow with a one-time code, no token in any URL). Accounts are linked by email only when the provider confirms it. Needs OAuth keys – see *Social sign-in setup*; a button is hidden when its keys are missing. |
 | Driver's license + selfie – how is it validated? Who verifies? | 4-step **identity verification** (license type → front/back/selfie upload → details → restriction codes). An **automatic document checker** runs 10 checks: LTO number format, expiry, age 21+, name match with the account, photo resolution, selfie ≠ license photo, photos reused by another account, license number already on another account, car restriction codes. The **admin** reviews the photos + check results and approves or rejects (with reason). Admin can also **revoke** a verification or **suspend** an account. (Real-time biometric face match was excluded.) |
 | Nearest pick-up | **"Nearest to me"** sort uses the browser's location; distance is calculated on the server and shown on every card. "Show cars nearest to me" shortcut on the home search. |
 | Excess hours / penalty | **Late-return fee**: 60-minute grace period, then the vehicle's hourly late fee, capped at 1.5× the daily rate per day late. Calculated automatically when the host records the return, deducted from the deposit, any extra billed as a balance the renter pays online. Overdue trips are flagged. |
@@ -132,7 +132,9 @@ You can push this folder as **one GitHub repo** (Render uses `backend/`, Vercel 
 | `CORS_ALLOWED_ORIGINS` | your Vercel URL (or `*` while testing) |
 | `LOG_CHANNEL` | `stderr` |
 | `SESSION_DRIVER` / `CACHE_STORE` | `array` / `file` |
-| `GOOGLE_CLIENT_ID` | optional (see below) |
+| `FRONTEND_URL` | your Vercel URL (OAuth return + password-reset links) |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | optional (see below) |
+| `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | optional (see below) |
 
 3. Deploy. On start the container runs `migrate --force` and `db:seed --force`. **The seeder only fills an empty database**, so the demo data is created once in Neon on the first deploy and is never reset afterwards – from then on your data lives in Neon. (To skip demo data, delete the `db:seed` line in `backend/docker/start.sh`.)
 4. Check `https://<your-api>.onrender.com/api/health` → `{"ok":true}`.
@@ -143,14 +145,16 @@ Alternatively use **New → Blueprint** with the included `render.yaml`.
 
 ### 3. Website – Vercel
 1. New Project → import the repo → **Root Directory: `frontend`** (Framework: Vite).
-2. Environment variable: `VITE_API_URL` = your Render URL (no trailing slash). Optional: `VITE_GOOGLE_CLIENT_ID`.
+2. Environment variable: `VITE_API_URL` = your Render URL (no trailing slash).
 3. Deploy. `vercel.json` already handles page refreshes on routes like `/vehicles/3`.
 4. Put the Vercel URL into Render's `CORS_ALLOWED_ORIGINS` and redeploy the API.
 
-### Google sign-in setup (optional, ~5 minutes)
-1. console.cloud.google.com → APIs & Services → **Credentials** → Create credentials → **OAuth client ID** → Web application.
-2. **Authorized JavaScript origins:** `http://localhost:5173` and your Vercel URL.
-3. Copy the Client ID into **both** `VITE_GOOGLE_CLIENT_ID` (Vercel) and `GOOGLE_CLIENT_ID` (Render), then redeploy both. The "Continue with Google" button appears automatically once the ID is set.
+### Social sign-in setup (optional)
+**Google:** console.cloud.google.com → APIs & Services → Credentials → Create credentials → OAuth client ID → *Web application*. Under **Authorized redirect URIs** add `<APP_URL>/api/auth/google/callback` (and `http://localhost:8000/api/auth/google/callback` for local). Put the Client ID and Client secret in `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+
+**Facebook:** developers.facebook.com → Create app (Consumer) → add **Facebook Login** → Settings: **Valid OAuth Redirect URIs** = `<APP_URL>/api/auth/facebook/callback`. Basic settings: set your **Privacy Policy URL** (`<FRONTEND_URL>/privacy`) and **Terms** URL (`<FRONTEND_URL>/terms`). Put the App ID and App Secret in `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET`. Switch the app to *Live* when ready.
+
+Set `FRONTEND_URL` to the website so the API can send people back. Password reset emails go through the configured mailer (`MAIL_MAILER=log` writes them to `storage/logs` locally).
 
 ---
 
@@ -167,6 +171,10 @@ Alternatively use **New → Blueprint** with the included `render.yaml`.
 - Admin: `admin/overview`, `admin/bookings` (+ cancel, refund, note, message), `admin/payments`, `admin/payouts`, `admin/verifications`, `admin/host-applications`, `admin/listings`, `admin/disputes`, `admin/users` (+ suspend, reinstate, revoke-verification), `admin/support`, `admin/settings`
 
 **ID verification checks** – The renter's browser runs the face and text checks (face detection, liveness/anti-spoof, face match and OCR with `@vladmandic/human` and `tesseract.js`, loaded only on the verify page; model files live in `frontend/public/models` and `frontend/public/tesseract`, and photos never leave the app for these checks). The selfie is a live camera capture only. These results are stored as `client_checks` and shown to admins tagged "device-reported", because a browser can be tampered with. The API runs its own checks (real image file, minimum size, perceptual-hash near-duplicates within a submission and across accounts, address sanity, license format/expiry/age/name, license already on another account). Every check is `pass`, `warn`, `fail` or `not_checked`; critical failures cap the score at 30% ("Likely fake – reject") and a missing image check can't score above 60%. Thresholds: `frontend/src/lib/verification/config.ts` and `backend/app/Services/VerificationChecker.php`.
+
+**Account blocking and the audit log** – Admins can *suspend* an account (temporary, with an end date; it reactivates by itself, hourly command `accounts:lift-expired`), *revoke* it (permanent) or reinstate it, always with a reason. The person is signed out everywhere at once, and at login sees the reason, the end date and how to appeal (`SUPPORT_EMAIL`). Blocked hosts' listings disappear from search; upcoming trips of a blocked renter or host are flagged under *Bookings → Needs decision* for an admin (cancelling gives the renter a full refund). Every admin action is written to the admin **Audit log** page (who, what, when, reason).
+
+**Hosting requirements** – Only ID-verified users can apply to host. The application stores the payout account number encrypted (`APP_KEY` must never change or it can't be read back). A listing can only be submitted with at least 3 photos, the OR and CR, a valid CTPL insurance photo and expiry date, a plate number and its pricing, grace period, late-fee and fuel-policy settings; an admin approves or sends it back with a reason.
 
 **Automatic decisions** – Critical failures (no face on the license or selfie, liveness/anti-spoof failed, face mismatch, expired license, license on another account, near-duplicate photos) are **always auto-rejected**: the renter gets a message saying what to retake and can resubmit. A submission is **auto-approved** only if `VERIFICATION_AUTO_APPROVE=true` *and* every check passes with no warnings *and* face match, liveness and anti-spoof clear their minimums by the margins in `backend/config/verification.php`. Everything else lands in the admin queue as "Needs review". Auto-decided submissions have their own tabs in the admin ID verifications page; a super admin (`users.is_super_admin`, the seeded `Admin` account) can override them. Every automatic decision and override is stored in `verification_decisions` (checks, scores, thresholds, timestamp, actor).
 

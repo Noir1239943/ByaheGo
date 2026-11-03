@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { PageLoader } from '@/components/common/States'
 import { useAuth } from '@/hooks/useAuth'
+import { destinationFor } from '@/lib/afterLogin'
 import type { Role } from '@/types'
 
 /** Pages that need a signed-in customer. Sends guests to sign in and back afterwards. */
@@ -23,7 +24,8 @@ export function GuestOnly() {
   if (loading) return <PageLoader />
   if (user) {
     const from = (location.state as { from?: string } | null)?.from
-    return <Navigate to={from ?? (user.role === 'admin' ? '/admin' : '/')} replace />
+    const intent = new URLSearchParams(location.search).get('intent') === 'host' ? 'host' : undefined
+    return <Navigate to={destinationFor(user, { from, intent })} replace />
   }
   return <Outlet />
 }

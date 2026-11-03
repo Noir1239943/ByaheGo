@@ -400,8 +400,7 @@ class BookingService
 
             if ($suspendRenter) {
                 $renter = $booking->renter;
-                $renter->update(['status' => 'suspended', 'suspended_at' => now(), 'suspended_reason' => 'Account on hold after incident on '.$booking->reference]);
-                $renter->tokens()->delete();
+                app(AccountStatusService::class)->suspend($renter, $admin, 'Account on hold after incident on '.$booking->reference, null);
             }
             Notifier::send($incident->reporter_id, 'Your report was reviewed', $action === 'charge' ? 'We approved the claim of '.Money::peso($amount).'.' : 'We reviewed your report and closed it.', null, 'info');
             return $incident->fresh();

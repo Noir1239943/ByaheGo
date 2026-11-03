@@ -29,7 +29,7 @@ export function AdminBookingsSection() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Tabs variant="pill" value={status} onChange={(v) => setParams({ status: v })} tabs={[
           { value: 'all', label: 'All', count: c?.all }, { value: 'upcoming', label: 'Upcoming', count: c?.upcoming }, { value: 'active', label: 'Active', count: c?.active },
-          { value: 'completed', label: 'Completed', count: c?.completed }, { value: 'cancelled', label: 'Cancelled', count: c?.cancelled }, { value: 'disputed', label: 'Disputed', count: c?.disputed },
+          { value: 'completed', label: 'Completed', count: c?.completed }, { value: 'cancelled', label: 'Cancelled', count: c?.cancelled }, { value: 'disputed', label: 'Disputed', count: c?.disputed }, { value: 'flagged', label: 'Needs decision', count: c?.flagged },
         ]} />
         <Input placeholder="Search booking ID, renter or plate" leftIcon={<Search />} value={q} onChange={(e) => { setQ(e.target.value); setParams((p) => { p.delete('page'); return p }) }} className="h-9 w-72" aria-label="Search bookings" />
       </div>

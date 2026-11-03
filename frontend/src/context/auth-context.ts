@@ -8,7 +8,8 @@ export type AuthContextValue = {
   unread: number
   login: (login: string, password: string) => Promise<User>
   register: (data: Parameters<typeof authService.register>[0]) => Promise<User>
-  googleLogin: (credential: string) => Promise<User>
+  /** Store a session that came from the Google / Facebook sign-in. */
+  socialSession: (res: { token: string; user: User }) => Promise<User>
   logout: () => Promise<void>
   refresh: () => Promise<void>
   setUser: (u: User) => void

@@ -54,6 +54,12 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    // The website (Vercel) that the API sends people back to after OAuth sign-in and in password reset emails.
+    'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
+
+    // Shown to blocked people as the place to appeal.
+    'support_email' => env('SUPPORT_EMAIL', 'support@byahego.ph'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

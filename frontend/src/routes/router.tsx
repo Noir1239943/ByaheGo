@@ -64,9 +64,16 @@ export const router = createBrowserRouter([
             children: [
               { path: 'login', lazy: page(() => import('@/pages/auth/LoginPage')), handle: { title: 'Log in' } },
               { path: 'register', lazy: page(() => import('@/pages/auth/RegisterPage')), handle: { title: 'Create your account' } },
+              { path: 'forgot-password', lazy: page(() => import('@/pages/auth/ForgotPasswordPage')), handle: { title: 'Forgot password' } },
+              { path: 'reset-password', lazy: page(() => import('@/pages/auth/ResetPasswordPage')), handle: { title: 'Reset password' } },
             ],
           },
         ],
+      },
+      {
+        // Not guest-only: the sign-in finishes here while a session may already exist.
+        element: <AuthLayout />,
+        children: [{ path: 'auth/callback', lazy: page(() => import('@/pages/auth/AuthCallbackPage')), handle: { title: 'Signing you in' } }],
       },
       {
         element: <RequireAuth />,
@@ -127,6 +134,7 @@ export const router = createBrowserRouter([
               { path: 'users', lazy: page(() => import('@/pages/admin/AdminUsersPage')), handle: { title: 'Users', subtitle: 'Renters, hosts and admins' } },
               { path: 'users/:id', lazy: page(() => import('@/pages/admin/AdminUserDetailPage')), handle: { title: 'User details' } },
               { path: 'support', lazy: page(() => import('@/pages/admin/AdminSupportPage')), handle: { title: 'Support inbox', subtitle: 'Messages from customers' } },
+              { path: 'audit-log', lazy: page(() => import('@/pages/admin/AdminAuditLogPage')), handle: { title: 'Audit log', subtitle: 'Who did what, when and why' } },
               { path: 'settings', lazy: page(() => import('@/pages/admin/AdminSettingsPage')), handle: { title: 'Settings', subtitle: 'Fees and policies' } },
             ],
           },

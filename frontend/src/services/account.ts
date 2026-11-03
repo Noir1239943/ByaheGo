@@ -24,7 +24,7 @@ export const accountService = {
   clearRecentlyViewed: () => api.delete('/me/recently-viewed'),
   verification: () => api.get<{ status: string; license: License | null }>('/verification').then((r) => r.data),
   submitVerification: (body: Record<string, unknown>) => api.post<{ status: string; decision: 'approve' | 'reject' | 'review'; message: string | null; license: License }>('/verification', body).then((r) => r.data),
-  hostApplication: () => api.get<{ application: HostApplication | null }>('/host-application').then((r) => r.data.application),
+  hostApplication: () => api.get<{ application: HostApplication | null; can_apply: boolean }>('/host-application').then((r) => r.data),
   applyHost: (body: Record<string, unknown>) => api.post<{ application: HostApplication }>('/host-application', body).then((r) => r.data.application),
   contact: (body: Record<string, unknown>) => api.post<{ message: string }>('/support', body).then((r) => r.data),
 }

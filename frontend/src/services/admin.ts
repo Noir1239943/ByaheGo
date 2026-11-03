@@ -1,9 +1,9 @@
 import { api } from '@/lib/api'
-import type { Booking, BookingRow, HostApplication, HostVehicle, Incident, License, Paginated, Payment, Payout, SupportTicket, User, UserBrief } from '@/types'
+import type { AuditLogEntry, Booking, BookingRow, HostApplication, HostVehicle, Incident, License, Paginated, Payment, Payout, SupportTicket, User, UserBrief } from '@/types'
 
 export type AdminOverview = {
   kpis: { gross_booking_value: number; gbv_change: number | null; platform_revenue: number; bookings: number; active_rentals: number; returns_today: number; cancellation_rate: number; users: number; live_vehicles: number }
-  attention: { verifications: number; listings: number; host_applications: number; disputes: number; payouts: number; support: number }
+  attention: { verifications: number; listings: number; host_applications: number; disputes: number; payouts: number; support: number; flagged_bookings: number }
   months: { label: string; amount: number }[]
   recent: BookingRow[]
 }
@@ -16,8 +16,10 @@ export const adminService = {
   overview: (range: string) => api.get<AdminOverview>('/admin/overview', { params: { range } }).then((r) => r.data),
   users: (params: Params) => api.get<Paginated<AdminUserRow>>('/admin/users', { params }).then((r) => r.data),
   user: (id: number | string) => api.get<{ user: User; license: License | null; stats: Record<string, number>; bookings: BookingRow[] }>(`/admin/users/${id}`).then((r) => r.data),
-  suspend: (id: number, reason: string) => api.post(`/admin/users/${id}/suspend`, { reason }),
-  reinstate: (id: number) => api.post(`/admin/users/${id}/reinstate`),
+  suspend: (id: number, reason: string, until: string) => api.post(`/admin/users/${id}/suspend`, { reason, until }),
+  revokeAccount: (id: number, reason: string) => api.post(`/admin/users/${id}/revoke`, { reason }),
+  reinstate: (id: number, note?: string) => api.post(`/admin/users/${id}/reinstate`, { note }),
+  auditLog: (params: Params) => api.get<Paginated<AuditLogEntry>>('/admin/audit-log', { params }).then((r) => r.data),
   revokeVerification: (id: number, reason: string) => api.post(`/admin/users/${id}/revoke-verification`, { reason }),
   verifications: (params: Params) => api.get<Paginated<License>>('/admin/verifications', { params }).then((r) => r.data),
   verification: (id: number | string) => api.get<License>(`/admin/verifications/${id}`).then((r) => r.data),

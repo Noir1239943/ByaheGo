@@ -13,7 +13,7 @@ import { IncidentsList } from '@/components/features/bookings/IncidentsList'
 import { InspectionsList } from '@/components/features/bookings/InspectionsList'
 import { PaymentsList } from '@/components/features/bookings/PaymentsList'
 import { TripTimeline } from '@/components/features/bookings/TripTimeline'
-import { Avatar, Badge, Button, Card, CardBody, CardHeader, Checkbox, Input, Modal, Select, Textarea } from '@/components/ui'
+import { Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, Checkbox, Input, Modal, Select, Textarea } from '@/components/ui'
 import { getErrorMessage } from '@/lib/api'
 import { formatDate, formatDateTime, peso, timeAgo } from '@/lib/format'
 import { adminService } from '@/services/admin'
@@ -61,6 +61,7 @@ export function AdminBookingDetailSection() {
   return (
     <section className="space-y-5">
       <Link to="/admin/bookings" className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-500 hover:text-ink-900"><ArrowLeft className="size-4" /> Bookings</Link>
+      {b.admin_flag && <Alert tone="warning" title="This trip needs a decision">{b.admin_flag_note} Cancel it (the renter gets a full refund) or leave it as is.</Alert>}
       <Card>
         <div className="flex flex-col gap-5 p-5 lg:flex-row lg:items-center">
           <div className="h-24 w-36 shrink-0 overflow-hidden rounded-2xl"><VehicleImage photo={v.photo} type={v.type} color={v.color_hex} alt={v.name} /></div>

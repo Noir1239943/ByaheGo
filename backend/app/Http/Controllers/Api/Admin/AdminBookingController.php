@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AdminAuditLog;
 use App\Models\Booking;
 use App\Models\Incident;
 use App\Models\Payment;
@@ -32,6 +33,7 @@ class AdminBookingController extends Controller
             'completed' => $q->where('status', 'completed'),
             'cancelled' => $q->where('status', 'cancelled'),
             'disputed' => $q->whereHas('incidents', fn ($i) => $i->where('status', 'open')),
+            'flagged' => $q->whereNotNull('admin_flag')->whereIn('status', ['confirmed', 'active']),
             default => null,
         };
         if ($term = $request->input('q')) {
@@ -47,9 +49,10 @@ class AdminBookingController extends Controller
             'completed' => Booking::where('status', 'completed')->count(),
             'cancelled' => Booking::where('status', 'cancelled')->count(),
             'disputed' => Booking::whereHas('incidents', fn ($i) => $i->where('status', 'open'))->count(),
+            'flagged' => Booking::whereNotNull('admin_flag')->whereIn('status', ['confirmed', 'active'])->count(),
         ];
         $monthStart = now()->startOfMonth();
-        return response()->json(Present::paginated($q->paginate(10), fn ($b) => Present::bookingRow($b)) + [
+        return response()->json(Present::paginated($q->paginate(10), fn ($b) => Present::bookingRow($b, true)) + [
             'counts' => $counts,
             'summary' => [
                 'this_month' => Booking::where('created_at', '>=', $monthStart)->count(),
@@ -69,6 +72,7 @@ class AdminBookingController extends Controller
     {
         $data = $request->validate(['reason' => ['required', 'string', 'max:200'], 'refund' => ['boolean']]);
         $booking = $this->bookings->cancel($this->find($reference), 'admin', $data['reason'], $request->user(), $data['refund'] ?? true);
+        AdminAuditLog::record($request->user(), 'booking.cancel', $booking, $data['reason'], ['refund' => $data['refund'] ?? true]);
         return response()->json(Present::booking($booking, 'admin'));
     }
 
@@ -77,6 +81,7 @@ class AdminBookingController extends Controller
         $data = $request->validate(['amount' => ['required', 'integer', 'min:1'], 'reason' => ['required', 'string', 'max:200']]);
         $booking = $this->find($reference);
         $this->bookings->issueRefund($booking, $data['amount'], 'Refund: '.$data['reason'], $request->user());
+        AdminAuditLog::record($request->user(), 'booking.refund', $booking, $data['reason'], ['amount' => $data['amount']]);
         return response()->json(Present::booking($booking->fresh(), 'admin'));
     }
 
@@ -133,12 +138,13 @@ class AdminBookingController extends Controller
         ]]);
     }
 
-    public function markPayoutPaid(int $id)
+    public function markPayoutPaid(Request $request, int $id)
     {
         $payout = Payout::with('booking')->findOrFail($id);
         if ($payout->status !== 'paid') {
             $payout->update(['status' => 'paid', 'paid_at' => now(), 'reference' => 'PO-'.now()->format('ymd').'-'.str_pad((string) $payout->id, 4, '0', STR_PAD_LEFT)]);
             $payout->booking?->log('payout', 'Host payout of ₱'.number_format($payout->amount).' sent.');
+            AdminAuditLog::record($request->user(), 'payout.mark_paid', $payout, null, ['amount' => $payout->amount]);
             Notifier::send($payout->host_id, 'Payout sent', '₱'.number_format($payout->amount)." for {$payout->booking?->reference} was sent to your payout account.", '/host/earnings', 'success');
         }
         return response()->json(['ok' => true]);
@@ -160,6 +166,7 @@ class AdminBookingController extends Controller
             'suspend_renter' => ['boolean'],
         ]);
         $incident = $this->bookings->resolveIncident(Incident::findOrFail($id), $data['action'], (int) ($data['amount'] ?? 0), $data['notes'] ?? null, (bool) ($data['suspend_renter'] ?? false), $request->user());
+        AdminAuditLog::record($request->user(), 'dispute.resolve', $incident, $data['notes'] ?? null, ['action' => $data['action'], 'amount' => (int) ($data['amount'] ?? 0), 'suspend_renter' => (bool) ($data['suspend_renter'] ?? false)]);
         return response()->json(Present::incident($incident->fresh(['booking.vehicle', 'booking.renter', 'booking.host', 'reporter'])));
     }
 }

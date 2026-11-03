@@ -13,7 +13,7 @@ export interface UserBrief {
   phone: string | null
   initials: string
   role: Role
-  status: 'active' | 'suspended'
+  status: 'active' | 'suspended' | 'revoked'
   verification_status: VerificationStatus
   joined_at: string | null
 }
@@ -24,10 +24,13 @@ export interface User extends UserBrief {
   is_super_admin?: boolean
   is_host: boolean
   suspended_reason: string | null
+  suspended_until?: string | null
+  revoked_at?: string | null
   notify_email: boolean
   notify_sms: boolean
   has_password: boolean
   google_linked: boolean
+  facebook_linked?: boolean
   payout: { method: 'gcash' | 'maya' | 'bank'; account_name: string; account_masked: string } | null
   host_application_status: 'pending' | 'approved' | 'rejected' | null
   last_login_at: string | null
@@ -131,6 +134,10 @@ export interface HostVehicle extends Omit<VehicleDetail, 'is_favorite' | 'review
   pickup_address: string | null
   or_media_id: number | null
   cr_media_id: number | null
+  ctpl_media_id: number | null
+  ctpl_expiry: string | null
+  grace_minutes: number
+  fuel_policy: 'same_level' | 'full_to_full'
   photo_ids: number[]
   submitted_at: string | null
   approved_at: string | null
@@ -183,6 +190,9 @@ export type DisplayStatus = 'upcoming' | 'active' | 'completed' | 'cancelled' | 
 
 export interface BookingRow {
   id: number
+  /** Admin views only: set when the renter or host was blocked and the trip needs a decision. */
+  admin_flag?: 'renter_blocked' | 'host_blocked' | null
+  admin_flag_note?: string | null
   reference: string
   status: BookingStatus
   display_status: DisplayStatus
@@ -263,6 +273,28 @@ export interface Booking extends Omit<BookingRow, 'vehicle' | 'has_open_incident
   refundable?: number
   commission_rate?: number
   events?: { type: string; message: string; actor: string; created_at: string }[]
+}
+
+/** Why a blocked person can't sign in, until when, and where to appeal. */
+export interface BlockInfo {
+  type: 'suspended' | 'revoked'
+  reason: string | null
+  until: string | null
+  appeal_email: string
+  appeal_url: string
+}
+
+export interface AuditLogEntry {
+  id: number
+  action: string
+  actor: string | null
+  target_type: string | null
+  target_id: number | null
+  target_label: string | null
+  reason: string | null
+  meta: Record<string, unknown> | null
+  ip: string | null
+  created_at: string
 }
 
 export type CheckResult = 'pass' | 'warn' | 'fail' | 'not_checked'
@@ -354,6 +386,7 @@ export interface HostApplication {
   payout_method: 'gcash' | 'maya' | 'bank'
   payout_account_name: string
   payout_account_masked: string
+  payout_bank?: string | null
   notes: string | null
   status: 'pending' | 'approved' | 'rejected'
   admin_notes: string | null

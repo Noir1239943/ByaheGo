@@ -35,6 +35,7 @@ type Form = {
   with_driver_available: boolean; driver_fee_per_day: string; instant_book: boolean; delivery_available: boolean; delivery_fee: string; pet_friendly: boolean
   pickup_type: 'hub' | 'own'; hub_id: number | null; pickup_address: string; city: string; lat: number | null; lng: number | null
   plate_number: string; or_media_id: number | null; cr_media_id: number | null
+  ctpl_media_id: number | null; ctpl_expiry: string; grace_minutes: string; fuel_policy: 'same_level' | 'full_to_full'
 }
 
 const EMPTY: Form = {
@@ -44,6 +45,7 @@ const EMPTY: Form = {
   with_driver_available: false, driver_fee_per_day: '1500', instant_book: true, delivery_available: false, delivery_fee: '300', pet_friendly: false,
   pickup_type: 'hub', hub_id: null, pickup_address: '', city: 'Cebu City', lat: null, lng: null,
   plate_number: '', or_media_id: null, cr_media_id: null,
+  ctpl_media_id: null, ctpl_expiry: '', grace_minutes: '30', fuel_policy: 'same_level',
 }
 
 function fromVehicle(v: HostVehicle): Form {
@@ -56,6 +58,7 @@ function fromVehicle(v: HostVehicle): Form {
     delivery_fee: s(v.delivery_fee || 300), pet_friendly: v.pet_friendly,
     pickup_type: v.pickup_type, hub_id: v.hub_id, pickup_address: v.pickup_address ?? '', city: v.pickup.city ?? 'Cebu City', lat: v.lat, lng: v.lng,
     plate_number: v.plate_number ?? '', or_media_id: v.or_media_id, cr_media_id: v.cr_media_id,
+    ctpl_media_id: v.ctpl_media_id, ctpl_expiry: v.ctpl_expiry ?? '', grace_minutes: s(v.grace_minutes ?? 30), fuel_policy: v.fuel_policy ?? 'same_level',
   }
 }
 
@@ -66,6 +69,7 @@ function toPayload(f: Form) {
     security_deposit: n(f.security_deposit), late_fee_per_hour: n(f.late_fee_per_hour), driver_fee_per_day: n(f.driver_fee_per_day), delivery_fee: n(f.delivery_fee),
     color: f.color || null, pickup_address: f.pickup_address || null, plate_number: f.plate_number.toUpperCase() || null,
     hub_id: f.pickup_type === 'hub' ? f.hub_id : null,
+    grace_minutes: n(f.grace_minutes), ctpl_expiry: f.ctpl_expiry || null,
   }
 }
 
@@ -108,6 +112,7 @@ export function VehicleWizardSection() {
     }
     if (step === 1) {
       if (!form.daily_rate || Number(form.daily_rate) < 300) e.daily_rate = 'Set a daily rate of at least ₱300.'
+      if (!form.late_fee_per_hour || Number(form.late_fee_per_hour) < 1) e.late_fee_per_hour = 'Set the fee per excess hour.'
     }
     if (step === 2) {
       if (form.pickup_type === 'hub' && !form.hub_id) e.hub_id = 'Choose a ByaheGo hub.'
@@ -117,6 +122,9 @@ export function VehicleWizardSection() {
       if (!form.plate_number.trim()) e.plate_number = 'Enter the plate number.'
       if (!form.or_media_id) e.or_media_id = 'Upload a photo of the Official Receipt (OR).'
       if (!form.cr_media_id) e.cr_media_id = 'Upload a photo of the Certificate of Registration (CR).'
+      if (!form.ctpl_media_id) e.ctpl_media_id = 'Upload a photo of your CTPL insurance.'
+      if (!form.ctpl_expiry) e.ctpl_expiry = 'Enter the CTPL expiry date.'
+      else if (form.ctpl_expiry <= new Date().toISOString().slice(0, 10)) e.ctpl_expiry = 'Your CTPL has expired. Renew it first.'
     }
     setErrors(e)
     if (Object.keys(e).length) toast.error(Object.values(e)[0])
@@ -305,7 +313,9 @@ export function VehicleWizardSection() {
                   <Input label="Weekly rate (7+ days)" type="number" leftIcon={<span className="text-xs font-bold">₱</span>} value={form.weekly_rate} onChange={(e) => set('weekly_rate', e.target.value)} optional hint={form.daily_rate ? `Renters save vs ${peso(Number(form.daily_rate) * 7)} at the daily rate` : undefined} />
                   <Input label="Minimum trip length (days)" type="number" min={1} value={form.min_days} onChange={(e) => set('min_days', e.target.value)} />
                   <Input label="Security deposit" type="number" leftIcon={<span className="text-xs font-bold">₱</span>} value={form.security_deposit} onChange={(e) => set('security_deposit', e.target.value)} hint="Refundable. Held during the trip." />
-                  <Input label="Late return fee per hour" type="number" leftIcon={<span className="text-xs font-bold">₱</span>} value={form.late_fee_per_hour} onChange={(e) => set('late_fee_per_hour', e.target.value)} hint="Charged after a 60-minute grace period (excess hours)." />
+                  <Input label="Late return fee per hour" type="number" leftIcon={<span className="text-xs font-bold">₱</span>} value={form.late_fee_per_hour} onChange={(e) => set('late_fee_per_hour', e.target.value)} error={errors.late_fee_per_hour} hint="Charged for each hour after the grace period (excess hours)." />
+                  <Input label="Grace period (minutes)" type="number" min={0} max={180} value={form.grace_minutes} onChange={(e) => set('grace_minutes', e.target.value)} hint="Free minutes after the return time before the fee starts." />
+                  <Select label="Fuel policy" value={form.fuel_policy} onChange={(e) => set('fuel_policy', e.target.value as Form['fuel_policy'])} options={[{ value: 'same_level', label: 'Return with the same fuel level' }, { value: 'full_to_full', label: 'Full to full (return with a full tank)' }]} />
                 </div>
                 <Alert tone="brand" className="mt-4" title="How pricing works">Renters see your daily rate plus a small service fee at checkout. You keep 85% of the rental and driver fees, plus any late fees.</Alert>
               </Card>
@@ -385,6 +395,8 @@ export function VehicleWizardSection() {
                 <Input label="Plate number" value={form.plate_number} onChange={(e) => set('plate_number', e.target.value.toUpperCase())} error={errors.plate_number} placeholder="ABC 1234" wrapperClassName="sm:col-span-2 sm:max-w-xs" />
                 <ImageUploader purpose="vehicle_or" label="Official Receipt (OR)" value={form.or_media_id} onChange={(v) => set('or_media_id', v)} error={errors.or_media_id} hint="Latest LTO registration payment" />
                 <ImageUploader purpose="vehicle_cr" label="Certificate of Registration (CR)" value={form.cr_media_id} onChange={(v) => set('cr_media_id', v)} error={errors.cr_media_id} hint="Shows the registered owner" />
+                <ImageUploader purpose="vehicle_ctpl" label="CTPL insurance" value={form.ctpl_media_id} onChange={(v) => set('ctpl_media_id', v)} error={errors.ctpl_media_id} hint="Compulsory Third Party Liability certificate" />
+                <Input label="CTPL valid until" type="date" value={form.ctpl_expiry} onChange={(e) => set('ctpl_expiry', e.target.value)} error={errors.ctpl_expiry} />
               </div>
             </Card>
           )}
@@ -395,7 +407,7 @@ export function VehicleWizardSection() {
                 { s: 0, t: 'Vehicle', rows: [[`${form.make} ${form.model} ${form.year}`, `${typeLabel(form.type)} · ${form.seats} seats · ${capitalize(form.transmission)} · ${capitalize(form.fuel)}`], ['Features', form.features.join(', ') || '—'], ['Photos', `${form.photo_ids.length} photo(s)`]] },
                 { s: 1, t: 'Pricing', rows: [['Daily rate', form.daily_rate ? peso(Number(form.daily_rate)) : '—'], ['Weekly rate', form.weekly_rate ? peso(Number(form.weekly_rate)) : '—'], ['Deposit · late fee', `${peso(Number(form.security_deposit))} · ${peso(Number(form.late_fee_per_hour))}/hour`], ['Driver', form.with_driver_available ? `${peso(Number(form.driver_fee_per_day))}/day` : 'Self-drive only']] },
                 { s: 2, t: 'Pick-up', rows: [[form.pickup_type === 'hub' ? 'ByaheGo hub' : 'Own location', form.pickup_type === 'hub' ? (hub ? `${hub.name}, ${hub.city}` : '—') : `${form.pickup_address}, ${form.city}`]] },
-                { s: 3, t: 'Registration', rows: [['Plate', form.plate_number || '—'], ['OR / CR', form.or_media_id && form.cr_media_id ? 'Uploaded ✓' : 'Missing']] },
+                { s: 3, t: 'Registration', rows: [['Plate', form.plate_number || '—'], ['OR / CR / CTPL', form.or_media_id && form.cr_media_id && form.ctpl_media_id ? 'Uploaded ✓' : 'Missing']] },
               ].map((g) => (
                 <div key={g.t} className="p-5">
                   <div className="flex items-center justify-between"><p className="font-bold">{g.t}</p><button className="text-sm font-semibold text-brand" onClick={() => setStep(g.s)}>Edit</button></div>

@@ -34,5 +34,13 @@ services:
         value: sync
       - key: VERIFICATION_AUTO_APPROVE
         value: "false"      # true = auto-approve clean ID submissions (auto-reject is always on)
+      - key: FRONTEND_URL
+        sync: false        # your Vercel URL, e.g. https://byahego.vercel.app (OAuth return + password reset links)
       - key: GOOGLE_CLIENT_ID
         sync: false        # optional, for "Continue with Google"
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: FACEBOOK_CLIENT_ID
+        sync: false        # optional, for "Continue with Facebook"
+      - key: FACEBOOK_CLIENT_SECRET
+        sync: false

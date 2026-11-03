@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router'
-import { ArrowLeft, Search, ShieldOff, UserCheck, UserX, Users } from 'lucide-react'
+import { ArrowLeft, Ban, Search, ShieldOff, UserCheck, UserX, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { KeyValue } from '@/components/common/InfoRow'
@@ -10,6 +10,7 @@ import { ErrorState, ListSkeleton, PageLoader } from '@/components/common/States
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { TripCard } from '@/components/features/account/TripCard'
 import { Alert, Avatar, Badge, Button, Card, CardHeader, EmptyState, Input, Pagination, Select, Table } from '@/components/ui'
+import { formatDateTime } from '@/lib/format'
 import { useDebounce } from '@/hooks/useDebounce'
 import { getErrorMessage } from '@/lib/api'
 import { formatDate, peso, timeAgo } from '@/lib/format'
@@ -30,7 +31,7 @@ export function AdminUsersSection() {
         <Input placeholder="Search name, email or username" leftIcon={<Search />} value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} wrapperClassName="flex-1 min-w-56" aria-label="Search users" />
         <Select aria-label="Role" value={role} onChange={(e) => { setRole(e.target.value); setPage(1) }} options={[{ value: '', label: 'All roles' }, { value: 'renter', label: 'Renters' }, { value: 'host', label: 'Hosts' }, { value: 'admin', label: 'Admins' }]} wrapperClassName="w-40" />
         <Select aria-label="Verification" value={verification} onChange={(e) => { setVerification(e.target.value); setPage(1) }} options={[{ value: '', label: 'Any ID status' }, { value: 'verified', label: 'Verified' }, { value: 'pending', label: 'In review' }, { value: 'unverified', label: 'Not verified' }, { value: 'rejected', label: 'Rejected' }]} wrapperClassName="w-44" />
-        <Select aria-label="Account status" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} options={[{ value: '', label: 'Any status' }, { value: 'active', label: 'Active' }, { value: 'suspended', label: 'On hold' }]} wrapperClassName="w-40" />
+        <Select aria-label="Account status" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} options={[{ value: '', label: 'Any status' }, { value: 'active', label: 'Active' }, { value: 'suspended', label: 'Suspended' }, { value: 'revoked', label: 'Revoked' }]} wrapperClassName="w-40" />
       </div>
       <Card>
         {isLoading ? <div className="p-5"><ListSkeleton /></div> : error ? <ErrorState error={error} onRetry={() => void refetch()} /> : (
@@ -46,7 +47,7 @@ export function AdminUsersSection() {
                 { key: 'id', header: 'ID status', cell: (u) => <StatusBadge status={u.verification_status} /> },
                 { key: 'activity', header: 'Activity', cell: (u) => <span className="text-ink-700">{u.bookings_count} trips{u.vehicles_count ? ` · ${u.vehicles_count} vehicles` : ''}</span> },
                 { key: 'seen', header: 'Last seen', cell: (u) => <span className="text-ink-500">{u.last_login_at ? timeAgo(u.last_login_at) : '—'}</span> },
-                { key: 'status', header: 'Account', cell: (u) => <StatusBadge status={u.status === 'active' ? 'live' : 'suspended'} label={u.status === 'active' ? 'Active' : 'On hold'} /> },
+                { key: 'status', header: 'Account', cell: (u) => <StatusBadge status={u.status === 'active' ? 'live' : u.status === 'revoked' ? 'revoked' : 'suspended'} label={u.status === 'active' ? 'Active' : u.status === 'revoked' ? 'Revoked' : 'Suspended'} /> },
               ]}
             />
             <div className="border-t border-line-100 p-4"><Pagination meta={data!.meta} onChange={setPage} label="users" /></div>
@@ -60,11 +61,14 @@ export function AdminUsersSection() {
 export function AdminUserDetailSection() {
   const { id = '' } = useParams()
   const qc = useQueryClient()
-  const [dialog, setDialog] = useState<null | 'suspend' | 'revoke'>(null)
+  const [dialog, setDialog] = useState<null | 'suspend' | 'revoke' | 'revoke_account' | 'reinstate'>(null)
+  const [until, setUntil] = useState('')
+  const [minDate] = useState(() => new Date(Date.now() + 86400000).toISOString().slice(0, 10))
   const { data, isLoading, error } = useQuery({ queryKey: ['admin', 'user', id], queryFn: () => adminService.user(id) })
   const done = (m: string) => { toast.success(m); setDialog(null); void qc.invalidateQueries({ queryKey: ['admin'] }) }
-  const suspend = useMutation({ mutationFn: (r: string) => adminService.suspend(Number(id), r), onSuccess: () => done('Account put on hold and signed out everywhere'), onError: (e) => toast.error(getErrorMessage(e)) })
-  const reinstate = useMutation({ mutationFn: () => adminService.reinstate(Number(id)), onSuccess: () => done('Account reinstated'), onError: (e) => toast.error(getErrorMessage(e)) })
+  const suspend = useMutation({ mutationFn: (r: string) => adminService.suspend(Number(id), r, until), onSuccess: () => done('Account suspended and signed out everywhere'), onError: (e) => toast.error(getErrorMessage(e)) })
+  const reinstate = useMutation({ mutationFn: (note: string) => adminService.reinstate(Number(id), note || undefined), onSuccess: () => done('Account reinstated'), onError: (e) => toast.error(getErrorMessage(e)) })
+  const revokeAccount = useMutation({ mutationFn: (r: string) => adminService.revokeAccount(Number(id), r), onSuccess: () => done('Account revoked and signed out everywhere'), onError: (e) => toast.error(getErrorMessage(e)) })
   const revoke = useMutation({ mutationFn: (r: string) => adminService.revokeVerification(Number(id), r), onSuccess: () => done('Verification revoked'), onError: (e) => toast.error(getErrorMessage(e)) })
   if (isLoading) return <PageLoader />
   if (error || !data) return <ErrorState error={error} />
@@ -78,17 +82,27 @@ export function AdminUserDetailSection() {
           <div>
             <p className="text-2xl font-extrabold">{u.name}</p>
             <p className="text-sm text-ink-500">@{u.username} · {u.email} · {u.phone ?? 'no phone'}</p>
-            <div className="mt-2 flex flex-wrap gap-2"><Badge tone="neutral" className="capitalize">{u.role}</Badge><StatusBadge status={u.verification_status} />{u.status === 'suspended' && <StatusBadge status="suspended" />}</div>
+            <div className="mt-2 flex flex-wrap gap-2"><Badge tone="neutral" className="capitalize">{u.role}</Badge><StatusBadge status={u.verification_status} />{u.status === 'suspended' && <StatusBadge status="suspended" label="Suspended" />}{u.status === 'revoked' && <StatusBadge status="revoked" label="Revoked" />}</div>
           </div>
         </div>
         {u.role !== 'admin' && (
           <div className="flex flex-wrap gap-2">
             {u.verification_status === 'verified' && <Button variant="secondary" icon={<ShieldOff className="size-4" />} onClick={() => setDialog('revoke')}>Revoke verification</Button>}
-            {u.status === 'active' ? <Button variant="danger-outline" icon={<UserX className="size-4" />} onClick={() => setDialog('suspend')}>Suspend account</Button> : <Button icon={<UserCheck className="size-4" />} loading={reinstate.isPending} onClick={() => reinstate.mutate()}>Reinstate</Button>}
+            {u.status === 'active' ? (
+              <>
+                <Button variant="danger-outline" icon={<UserX className="size-4" />} onClick={() => setDialog('suspend')}>Suspend</Button>
+                <Button variant="danger-outline" icon={<Ban className="size-4" />} onClick={() => setDialog('revoke_account')}>Revoke account</Button>
+              </>
+            ) : <Button icon={<UserCheck className="size-4" />} onClick={() => setDialog('reinstate')}>Reinstate</Button>}
           </div>
         )}
       </Card>
-      {u.status === 'suspended' && <Alert tone="danger" title="Account on hold">{u.suspended_reason}</Alert>}
+      {u.status !== 'active' && (
+        <Alert tone="danger" title={u.status === 'revoked' ? 'Account revoked (permanent)' : 'Account suspended'}>
+          {u.suspended_reason}
+          {u.status === 'suspended' && <span className="mt-1 block">{u.suspended_until ? `Ends ${formatDateTime(u.suspended_until)} and reactivates automatically.` : 'No end date: stays suspended until an admin reinstates it.'}</span>}
+        </Alert>
+      )}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Completed trips" value={stats.trips} />
         <StatCard label="Total spent" value={peso(stats.spent)} />
@@ -121,7 +135,11 @@ export function AdminUserDetailSection() {
           </div>
         </Card>
       </div>
-      <ConfirmDialog open={dialog === 'suspend'} onClose={() => setDialog(null)} title={`Suspend ${u.name}?`} description="They're signed out right away, can't book or log in, and their live listings are paused." tone="danger" confirmLabel="Suspend account" loading={suspend.isPending} reason={{ label: 'Reason (shown to the user)', required: true, placeholder: 'e.g. Submitted fake documents' }} onConfirm={(r) => suspend.mutate(r)} />
+      <ConfirmDialog open={dialog === 'suspend'} onClose={() => setDialog(null)} title={`Suspend ${u.name}?`} description="Temporary. They're signed out everywhere right away and can't log in or book until the end date. Their listings are hidden and their upcoming trips are flagged for you to decide." tone="danger" confirmLabel="Suspend account" loading={suspend.isPending} reason={{ label: 'Reason (shown to the user)', required: true, placeholder: 'e.g. Submitted fake documents' }} onConfirm={(r) => until && suspend.mutate(r)}>
+        <Input label="Suspended until" type="date" value={until} min={minDate} onChange={(e) => setUntil(e.target.value)} hint="Up to one year. The account reactivates by itself on this date." wrapperClassName="mb-4" />
+      </ConfirmDialog>
+      <ConfirmDialog open={dialog === 'revoke_account'} onClose={() => setDialog(null)} title={`Revoke ${u.name}'s account?`} description="Permanent. They're signed out everywhere and cannot come back unless you reinstate them. Their listings are hidden and upcoming trips are flagged for you." tone="danger" confirmLabel="Revoke account" loading={revokeAccount.isPending} reason={{ label: 'Reason (shown to the user)', required: true, placeholder: 'e.g. Repeated fraud' }} onConfirm={(r) => revokeAccount.mutate(r)} />
+      <ConfirmDialog open={dialog === 'reinstate'} onClose={() => setDialog(null)} title={`Reinstate ${u.name}?`} description="They can log in, book and host again. Flags on their trips are cleared." confirmLabel="Reinstate" loading={reinstate.isPending} reason={{ label: 'Note (optional, kept in the audit log)', placeholder: 'e.g. Appeal accepted' }} onConfirm={(n) => reinstate.mutate(n)} />
       <ConfirmDialog open={dialog === 'revoke'} onClose={() => setDialog(null)} title="Revoke license verification?" description="They'll need to verify again before booking self-drive trips." tone="danger" confirmLabel="Revoke" loading={revoke.isPending} reason={{ label: 'Reason', required: true, placeholder: 'e.g. License reported as expired' }} onConfirm={(r) => revoke.mutate(r)} />
     </section>
   )

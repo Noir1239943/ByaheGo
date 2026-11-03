@@ -1,7 +1,7 @@
 import { api } from '@/lib/api'
 import { compressImage } from '@/lib/image'
 
-export type MediaPurpose = 'vehicle_photo' | 'license_front' | 'license_back' | 'selfie' | 'vehicle_or' | 'vehicle_cr' | 'incident' | 'inspection'
+export type MediaPurpose = 'vehicle_photo' | 'license_front' | 'license_back' | 'selfie' | 'vehicle_or' | 'vehicle_cr' | 'vehicle_ctpl' | 'incident' | 'inspection'
 
 export const mediaService = {
   async upload(file: File, purpose: MediaPurpose) {

@@ -46,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const code = (e as CustomEvent<{ code?: string }>).detail?.code
       setUser(null)
       queryClient.clear()
-      toast.error(code === 'account_suspended' ? 'Your account is on hold. Please contact support.' : 'Your session ended. Please sign in again.')
+      toast.error(code === 'account_blocked' ? 'Your account is on hold. Sign in again to see why and how to appeal.' : 'Your session ended. Please sign in again.')
     }
     window.addEventListener('byahego:signed-out', onSignedOut)
     return () => window.removeEventListener('byahego:signed-out', onSignedOut)
@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       unread,
       login: async (login, password) => finish(await authService.login(login, password)),
       register: async (data) => finish(await authService.register(data)),
-      googleLogin: async (credential) => finish(await authService.google(credential)),
+      socialSession: finish,
       logout: async () => {
         try {
           await authService.logout()

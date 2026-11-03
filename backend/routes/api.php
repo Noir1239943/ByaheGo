@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\Host\HostDashboardController;
 use App\Http\Controllers\Api\Host\HostVehicleController;
 use App\Http\Controllers\Api\HostApplicationController;
 use App\Http\Controllers\Api\MediaController;
+use App\Http\Controllers\Api\SocialAuthController;
 use App\Http\Controllers\Api\SupportController;
 use App\Http\Controllers\Api\VehicleController;
 use App\Http\Controllers\Api\VerificationController;
@@ -23,9 +24,14 @@ Route::get('/health', fn () => ['ok' => true, 'time' => now()->toIso8601String()
 // ----- Public -----
 Route::prefix('auth')->group(function () {
     Route::post('register', [AuthController::class, 'register'])->middleware('throttle:10,1');
-    Route::post('login', [AuthController::class, 'login'])->middleware('throttle:15,1');
-    Route::post('google', [AuthController::class, 'google'])->middleware('throttle:15,1');
+    Route::post('login', [AuthController::class, 'login'])->middleware('throttle:login');
+    Route::post('forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:password-reset');
+    Route::post('reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:password-reset');
     Route::get('config', [AuthController::class, 'config']);
+    Route::post('social/exchange', [SocialAuthController::class, 'exchange'])->middleware('throttle:15,1');
+    Route::post('social/complete', [SocialAuthController::class, 'complete'])->middleware('throttle:10,1');
+    Route::get('{provider}/redirect', [SocialAuthController::class, 'redirect'])->where('provider', 'google|facebook');
+    Route::get('{provider}/callback', [SocialAuthController::class, 'callback'])->where('provider', 'google|facebook');
 });
 Route::get('hubs', [VehicleController::class, 'hubs']);
 Route::get('stats', [VehicleController::class, 'stats']);
@@ -97,7 +103,9 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::get('users', [AdminUserController::class, 'index']);
         Route::get('users/{id}', [AdminUserController::class, 'show'])->whereNumber('id');
         Route::post('users/{id}/suspend', [AdminUserController::class, 'suspend'])->whereNumber('id');
+        Route::post('users/{id}/revoke', [AdminUserController::class, 'revoke'])->whereNumber('id');
         Route::post('users/{id}/reinstate', [AdminUserController::class, 'reinstate'])->whereNumber('id');
+        Route::get('audit-log', [AdminMiscController::class, 'auditLog']);
         Route::post('users/{id}/revoke-verification', [AdminUserController::class, 'revokeVerification'])->whereNumber('id');
         Route::get('verifications', [AdminUserController::class, 'verifications']);
         Route::get('verifications/{id}', [AdminUserController::class, 'verification'])->whereNumber('id');

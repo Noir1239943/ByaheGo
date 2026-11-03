@@ -55,10 +55,13 @@ class Present
             'is_super_admin' => (bool) $u->is_super_admin,
             'is_host' => $u->isHost(),
             'suspended_reason' => $u->suspended_reason,
+            'suspended_until' => $u->suspended_until?->toIso8601String(),
+            'revoked_at' => $u->revoked_at?->toIso8601String(),
             'notify_email' => $u->notify_email,
             'notify_sms' => $u->notify_sms,
             'has_password' => $u->password !== null,
-            'google_linked' => $u->google_id !== null,
+            'google_linked' => $u->socialAccounts()->where('provider', 'google')->exists(),
+            'facebook_linked' => $u->socialAccounts()->where('provider', 'facebook')->exists(),
             'payout' => $u->payout_method ? [
                 'method' => $u->payout_method,
                 'account_name' => $u->payout_account_name,
@@ -152,6 +155,10 @@ class Present
             'pickup_address' => $v->pickup_address,
             'or_media_id' => $v->or_media_id,
             'cr_media_id' => $v->cr_media_id,
+            'ctpl_media_id' => $v->ctpl_media_id,
+            'ctpl_expiry' => $v->ctpl_expiry?->toDateString(),
+            'grace_minutes' => $v->grace_minutes,
+            'fuel_policy' => $v->fuel_policy,
             'photo_ids' => $v->photos->pluck('media_id')->values(),
             'submitted_at' => $v->submitted_at?->toIso8601String(),
             'approved_at' => $v->approved_at?->toIso8601String(),
@@ -298,6 +305,8 @@ class Present
         }
         if ($viewer === 'admin') {
             $data['admin_note'] = $b->admin_note;
+            $data['admin_flag'] = $b->admin_flag;
+            $data['admin_flag_note'] = $b->admin_flag_note;
             $data['refundable'] = $service->refundableAmount($b);
             $data['events'] = $b->events()->with('actor')->get()->map(fn ($e) => [
                 'type' => $e->type, 'message' => $e->message, 'actor' => $e->actor?->name ?? 'System', 'created_at' => $e->created_at?->toIso8601String(),
@@ -307,9 +316,10 @@ class Present
         return $data;
     }
 
-    public static function bookingRow(Booking $b): array
+    public static function bookingRow(Booking $b, bool $admin = false): array
     {
         return [
+            ...($admin ? ['admin_flag' => $b->admin_flag, 'admin_flag_note' => $b->admin_flag_note] : []),
             'id' => $b->id,
             'reference' => $b->reference,
             'status' => $b->status,
@@ -395,6 +405,8 @@ class Present
             'business_name' => $a->business_name,
             'payout_method' => $a->payout_method,
             'payout_account_name' => $a->payout_account_name,
+            'payout_bank' => $a->payout_bank,
+            'terms_accepted_at' => $a->terms_accepted_at?->toIso8601String(),
             'payout_account_masked' => '•••• '.substr($digits, -4),
             'notes' => $a->notes,
             'status' => $a->status,

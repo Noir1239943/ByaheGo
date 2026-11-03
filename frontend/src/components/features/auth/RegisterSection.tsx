@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { Alert, Button, Checkbox, Input } from '@/components/ui'
 import { useAuth } from '@/hooks/useAuth'
 import { getErrorMessage, getFieldErrors } from '@/lib/api'
-import { GoogleSignInButton } from './GoogleSignInButton'
+import { SocialButtons } from './SocialButtons'
 
 export function RegisterSection() {
   const { register } = useAuth()
@@ -61,7 +61,7 @@ export function RegisterSection() {
           Create account
         </Button>
       </form>
-      <GoogleSignInButton text="signup_with" />
+      <SocialButtons />
       <p className="mt-6 text-center text-sm text-ink-500">
         Already have an account?{' '}
         <Link to="/login" state={location.state} className="font-semibold text-brand hover:underline">

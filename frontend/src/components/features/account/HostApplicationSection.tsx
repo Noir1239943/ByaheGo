@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle2, Clock, LayoutDashboard, Store, XCircle } from 'lucide-react'
+import { BadgeCheck, CheckCircle2, Clock, LayoutDashboard, Store, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { PageTitle } from '@/components/common/SectionHeading'
 import { PageLoader } from '@/components/common/States'
@@ -14,11 +14,13 @@ import { accountService } from '@/services/account'
 export function HostApplicationSection() {
   const { user, refresh } = useAuth()
   const qc = useQueryClient()
-  const { data: app, isLoading } = useQuery({ queryKey: ['host-application'], queryFn: accountService.hostApplication })
+  const { data, isLoading } = useQuery({ queryKey: ['host-application'], queryFn: accountService.hostApplication })
+  const app = data?.application ?? null
+  const canApply = data?.can_apply ?? false
   const [retry, setRetry] = useState(false)
   const [form, setForm] = useState({
     full_name: user?.name ?? '', phone: user?.phone ?? '', city: user?.city ?? '', address: '', vehicle_count: '1', vehicle_types: [] as string[],
-    business_name: '', payout_method: 'gcash', payout_account_name: user?.name ?? '', payout_account_number: '', notes: '',
+    business_name: '', payout_method: 'gcash', payout_bank: '', payout_account_name: user?.name ?? '', payout_account_number: '', notes: '',
   })
   const [agree, setAgree] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -62,6 +64,19 @@ export function HostApplicationSection() {
     )
   }
 
+  if (!canApply) {
+    return (
+      <section>
+        <PageTitle title="Become a host" description="Tell us about you and your vehicles. Once approved, you can list them and start earning." />
+        <Card className="p-8 text-center">
+          <BadgeCheck className="mx-auto size-12 text-brand" />
+          <h2 className="mt-3 text-xl font-bold">Verify your driver's license first</h2>
+          <p className="mx-auto mt-1 max-w-md text-ink-500">Hosts are verified people. It takes about 3 minutes, and you only do it once – then you can come back and apply.</p>
+          <Button className="mt-5" to="/verify">Verify my ID</Button>
+        </Card>
+      </section>
+    )
+  }
   const f = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setForm({ ...form, [k]: e.target.value })
   const onSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -72,17 +87,17 @@ export function HostApplicationSection() {
     <section>
       <PageTitle title="Become a host" description="Tell us about you and your vehicles. Once approved, you can list them and start earning." />
       <Alert tone="brand" icon={<Store />} className="mb-5" title="How hosting works">
-        Apply → our team reviews you (1–2 days) → list your vehicle with photos and OR/CR → we approve the listing → renters book and you get paid 3 days after each trip.
+        Apply → our team reviews you (1–2 days) → list your vehicle with photos, OR/CR and CTPL insurance → we approve the listing → renters book and you get paid 3 days after each trip.
       </Alert>
       <form onSubmit={onSubmit} className="space-y-5" noValidate>
         <Card>
           <CardHeader title="About you" />
           <CardBody className="grid gap-4 sm:grid-cols-2">
             <Input label="Full name" value={form.full_name} onChange={f('full_name')} error={errors.full_name} />
-            <Input label="Mobile number" value={form.phone} onChange={f('phone')} error={errors.phone} placeholder="0917 123 4567" />
+            <Input label="Mobile number" type="tel" value={form.phone} onChange={f('phone')} error={errors.phone} placeholder="0917 123 4567" />
             <Input label="City" value={form.city} onChange={f('city')} error={errors.city} placeholder="e.g. Cordova" />
             <Input label="Business name" value={form.business_name} onChange={f('business_name')} optional />
-            <Input label="Address" value={form.address} onChange={f('address')} wrapperClassName="sm:col-span-2" optional />
+            <Input label="Address" value={form.address} onChange={f('address')} error={errors.address} wrapperClassName="sm:col-span-2" placeholder="House no., street, barangay" />
           </CardBody>
         </Card>
         <Card>
@@ -102,9 +117,10 @@ export function HostApplicationSection() {
           </CardBody>
         </Card>
         <Card>
-          <CardHeader title="Where should we send your earnings?" description="Payouts are sent 3 days after each completed trip." />
-          <CardBody className="grid gap-4 sm:grid-cols-3">
-            <Select label="Payout method" value={form.payout_method} onChange={f('payout_method')} options={[{ value: 'gcash', label: 'GCash' }, { value: 'maya', label: 'Maya' }, { value: 'bank', label: 'Bank transfer' }]} />
+          <CardHeader title="Where should we send your earnings?" description="Payouts are sent 3 days after each completed trip. We store your account number encrypted." />
+          <CardBody className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <Select label="Payout method" value={form.payout_method} onChange={f('payout_method')} options={[{ value: 'gcash', label: 'GCash' }, { value: 'bank', label: 'Bank transfer' }]} error={errors.payout_method} />
+            {form.payout_method === 'bank' && <Input label="Bank name" value={form.payout_bank} onChange={f('payout_bank')} error={errors.payout_bank} placeholder="e.g. BDO" />}
             <Input label="Account name" value={form.payout_account_name} onChange={f('payout_account_name')} error={errors.payout_account_name} />
             <Input label={form.payout_method === 'bank' ? 'Account number' : 'Mobile number'} value={form.payout_account_number} onChange={f('payout_account_number')} error={errors.payout_account_number} />
           </CardBody>

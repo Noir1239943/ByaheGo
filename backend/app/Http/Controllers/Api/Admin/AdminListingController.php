@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AdminAuditLog;
 use App\Models\Vehicle;
 use App\Support\Notifier;
 use App\Support\Present;
@@ -28,12 +29,13 @@ class AdminListingController extends Controller
         return response()->json(Present::hostVehicle(Vehicle::with(['hub', 'photos', 'host'])->findOrFail($id)));
     }
 
-    public function approve(int $id)
+    public function approve(Request $request, int $id)
     {
         $v = Vehicle::with(['hub', 'photos', 'host'])->findOrFail($id);
         if ($v->status !== 'pending') throw ValidationException::withMessages(['status' => 'Only listings in review can be approved.']);
         $v->update(['status' => 'live', 'approved_at' => now(), 'rejection_reason' => null]);
         Notifier::send($v->host_id, 'Your listing is live!', "{$v->name} is now visible to renters.", '/host/vehicles', 'success');
+        AdminAuditLog::record($request->user(), 'listing.approve', $v);
         return response()->json(Present::hostVehicle($v->fresh(['hub', 'photos', 'host'])));
     }
 
@@ -44,6 +46,7 @@ class AdminListingController extends Controller
         if ($v->status !== 'pending') throw ValidationException::withMessages(['status' => 'Only listings in review can be rejected.']);
         $v->update(['status' => 'rejected', 'rejection_reason' => $data['reason']]);
         Notifier::send($v->host_id, 'Your listing needs changes', "{$v->name}: {$data['reason']}", "/host/vehicles/{$v->id}/edit", 'warning');
+        AdminAuditLog::record($request->user(), 'listing.reject', $v, $data['reason']);
         return response()->json(Present::hostVehicle($v->fresh(['hub', 'photos', 'host'])));
     }
 
@@ -51,6 +54,7 @@ class AdminListingController extends Controller
     {
         $v = Vehicle::with(['hub', 'photos', 'host'])->findOrFail($id);
         $v->update(['status' => 'paused']);
+        AdminAuditLog::record($request->user(), 'listing.pause', $v, $request->input('reason'));
         Notifier::send($v->host_id, 'Listing paused by ByaheGo', "{$v->name} was paused by our team. Contact support for details.", '/host/vehicles', 'warning');
         return response()->json(Present::hostVehicle($v->fresh(['hub', 'photos', 'host'])));
     }

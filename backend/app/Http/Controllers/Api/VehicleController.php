@@ -167,7 +167,7 @@ class VehicleController extends Controller
     {
         $vehicle = Vehicle::with(['hub', 'photos', 'host'])->findOrFail($id);
         $user = Auth::guard('sanctum')->user();
-        $canSee = $vehicle->status === 'live' || ($user && ($user->isAdmin() || $user->id === $vehicle->host_id));
+        $canSee = ($vehicle->status === 'live' && ! $vehicle->host?->isBlocked()) || ($user && ($user->isAdmin() || $user->id === $vehicle->host_id));
         if (! $canSee) abort(404, 'This vehicle is no longer available.');
 
         if ($user) {

@@ -56,9 +56,10 @@ class AdminOverviewController extends Controller
                 'disputes' => Incident::where('status', 'open')->count(),
                 'payouts' => Payout::where('status', 'scheduled')->where('scheduled_for', '<=', today())->count(),
                 'support' => SupportTicket::where('status', 'open')->count(),
+                'flagged_bookings' => Booking::whereNotNull('admin_flag')->whereIn('status', ['confirmed', 'active'])->count(),
             ],
             'months' => $months,
-            'recent' => Booking::with(['vehicle.hub', 'vehicle.photos', 'renter', 'host'])->latest()->limit(6)->get()->map(fn ($b) => Present::bookingRow($b)),
+            'recent' => Booking::with(['vehicle.hub', 'vehicle.photos', 'renter', 'host'])->latest()->limit(6)->get()->map(fn ($b) => Present::bookingRow($b, true)),
         ]);
     }
 }

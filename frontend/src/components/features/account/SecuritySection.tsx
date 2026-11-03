@@ -49,6 +49,13 @@ export function SecuritySection() {
             </div>
             <Badge tone={user.google_linked ? 'success' : 'neutral'}>{user.google_linked ? 'Connected' : 'Not connected'}</Badge>
           </div>
+          <div className="flex items-center justify-between rounded-xl border border-line-200 p-3">
+            <div className="flex items-center gap-3">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-[#1877F2] text-lg font-bold text-white shadow-sm">f</span>
+              <div><p className="text-sm font-semibold">Facebook</p><p className="text-xs text-ink-500">{user.facebook_linked ? 'Signed in with Facebook' : 'Sign in with Facebook using the same email'}</p></div>
+            </div>
+            <Badge tone={user.facebook_linked ? 'success' : 'neutral'}>{user.facebook_linked ? 'Connected' : 'Not connected'}</Badge>
+          </div>
         </CardBody>
       </Card>
       <Card>

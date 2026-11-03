@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AdminAuditLog;
+use App\Support\Present;
 use App\Models\SupportTicket;
 use App\Support\Notifier;
 use App\Support\Settings;
@@ -34,6 +36,21 @@ class AdminMiscController extends Controller
         return response()->json(['ok' => true]);
     }
 
+    public function auditLog(Request $request)
+    {
+        $q = AdminAuditLog::with('actor')->latest('id');
+        if ($action = $request->input('action')) $q->where('action', 'like', $action.'%');
+        if ($term = trim((string) $request->input('q'))) {
+            $like = '%'.mb_strtolower($term).'%';
+            $q->where(fn ($w) => $w->whereRaw('LOWER(target_label) LIKE ?', [$like])->orWhereRaw('LOWER(reason) LIKE ?', [$like])
+                ->orWhereHas('actor', fn ($a) => $a->whereRaw('LOWER(name) LIKE ?', [$like])));
+        }
+        return response()->json(Present::paginated($q->paginate(20), fn ($l) => [
+            'id' => $l->id, 'action' => $l->action, 'actor' => $l->actor?->name, 'target_type' => $l->target_type, 'target_id' => $l->target_id,
+            'target_label' => $l->target_label, 'reason' => $l->reason, 'meta' => $l->meta, 'ip' => $l->ip, 'created_at' => $l->created_at?->toIso8601String(),
+        ]));
+    }
+
     public function settings()
     {
         return response()->json(['values' => Settings::all(), 'labels' => Settings::LABELS]);
@@ -50,6 +67,7 @@ class AdminMiscController extends Controller
             'deposit_release_days' => ['required', 'integer', 'between:1,14'],
         ]);
         Settings::set($data);
+        AdminAuditLog::record($request->user(), 'settings.update', null, null, $data);
         return response()->json(['values' => Settings::all(), 'labels' => Settings::LABELS]);
     }
 }

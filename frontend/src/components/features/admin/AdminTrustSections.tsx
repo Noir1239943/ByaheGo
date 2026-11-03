@@ -273,7 +273,8 @@ export function AdminHostApplicationsSection() {
                 <KeyValue label="Phone" value={a.phone} />
                 <KeyValue label="Vehicles" value={`${a.vehicle_count} · ${a.vehicle_types.map(typeLabel).join(', ')}`} />
                 {a.business_name && <KeyValue label="Business" value={a.business_name} />}
-                <KeyValue label="Payouts" value={`${PAYOUT_LABELS[a.payout_method]} ${a.payout_account_masked} (${a.payout_account_name})`} />
+                <KeyValue label="Payouts" value={`${PAYOUT_LABELS[a.payout_method]}${a.payout_bank ? ` (${a.payout_bank})` : ''} ${a.payout_account_masked} (${a.payout_account_name})`} />
+                {a.address && <KeyValue label="Address" value={a.address} />}
                 <KeyValue label="Renter ID" value={<StatusBadge status={a.user?.verification_status ?? 'unverified'} />} />
               </div>
               {a.notes && <p className="mt-3 rounded-xl bg-page p-3 text-sm text-ink-700">“{a.notes}”</p>}
@@ -347,9 +348,10 @@ export function AdminListingDetailSection() {
   if (isLoading) return <PageLoader />
   if (error || !v) return <ErrorState error={error} />
   const checks = [
-    { ok: v.photos.length >= 1, t: 'At least one photo' },
+    { ok: v.photos.length >= 3, t: 'At least 3 photos' },
     { ok: !!v.plate_number, t: 'Plate number provided' },
     { ok: !!v.or_media_id && !!v.cr_media_id, t: 'OR and CR uploaded' },
+    { ok: !!v.ctpl_media_id && !!v.ctpl_expiry && v.ctpl_expiry > new Date().toISOString().slice(0, 10), t: v.ctpl_expiry ? `CTPL insurance valid until ${formatDate(v.ctpl_expiry)}` : 'CTPL insurance uploaded' },
     { ok: v.daily_rate >= 300, t: 'Daily rate set' },
     { ok: !!v.pickup.label, t: 'Pick-up location set' },
   ]
@@ -378,6 +380,7 @@ export function AdminListingDetailSection() {
             <CardBody className="grid gap-4 sm:grid-cols-2">
               <div><p className="mb-1.5 text-sm font-semibold">Official Receipt (OR)</p><ProtectedImage id={v.or_media_id} alt="OR" className="aspect-[16/10] w-full border border-line-200" onOpen={setZoom} /></div>
               <div><p className="mb-1.5 text-sm font-semibold">Certificate of Registration (CR)</p><ProtectedImage id={v.cr_media_id} alt="CR" className="aspect-[16/10] w-full border border-line-200" onOpen={setZoom} /></div>
+              <div><p className="mb-1.5 text-sm font-semibold">CTPL insurance</p><ProtectedImage id={v.ctpl_media_id} alt="CTPL" className="aspect-[16/10] w-full border border-line-200" onOpen={setZoom} /></div>
             </CardBody>
           </Card>
           <Card className="p-5"><p className="font-bold">Description</p><p className="mt-2 text-sm text-ink-700">{v.description || '—'}</p><p className="mt-3 text-sm text-ink-500">Features: {v.features.join(', ') || '—'}</p></Card>

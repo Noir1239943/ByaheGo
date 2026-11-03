@@ -75,6 +75,10 @@ class HostVehicleController extends Controller
             'photo_ids.*' => ['integer', Rule::exists('media', 'id')->where('user_id', $user->id)->where('purpose', 'vehicle_photo')],
             'or_media_id' => $ownMedia('vehicle_or'),
             'cr_media_id' => $ownMedia('vehicle_cr'),
+            'ctpl_media_id' => $ownMedia('vehicle_ctpl'),
+            'ctpl_expiry' => ['nullable', 'date'],
+            'grace_minutes' => ['nullable', 'integer', 'between:0,180'],
+            'fuel_policy' => ['nullable', Rule::in(['same_level', 'full_to_full'])],
         ];
     }
 
@@ -82,7 +86,7 @@ class HostVehicleController extends Controller
     {
         $photoIds = $data['photo_ids'] ?? null;
         unset($data['photo_ids']);
-        foreach (['daily_rate', 'driver_fee_per_day', 'delivery_fee', 'security_deposit', 'late_fee_per_hour', 'min_days'] as $k) {
+        foreach (['daily_rate', 'driver_fee_per_day', 'delivery_fee', 'security_deposit', 'late_fee_per_hour', 'min_days', 'grace_minutes', 'fuel_policy'] as $k) {
             if (array_key_exists($k, $data) && $data[$k] === null) unset($data[$k]);
         }
         if (($data['pickup_type'] ?? $vehicle->pickup_type) === 'hub' && ! empty($data['hub_id'])) {
@@ -127,7 +131,11 @@ class HostVehicleController extends Controller
         if ($vehicle->daily_rate < 300) $missing[] = 'a daily rate (at least ₱300)';
         if ($vehicle->pickup_type === 'hub' ? ! $vehicle->hub_id : ! ($vehicle->pickup_address && $vehicle->city)) $missing[] = 'a pick-up location';
         if (! $vehicle->plate_number) $missing[] = 'the plate number';
+        if ($vehicle->photos->count() < 3) $missing[] = 'at least 3 photos of the car';
         if (! $vehicle->or_media_id || ! $vehicle->cr_media_id) $missing[] = 'photos of the OR and CR';
+        if (! $vehicle->ctpl_media_id) $missing[] = 'a photo of the CTPL insurance';
+        elseif (! $vehicle->ctpl_expiry || $vehicle->ctpl_expiry->lessThanOrEqualTo(today())) $missing[] = 'a CTPL expiry date that is still valid';
+        if ($vehicle->late_fee_per_hour < 1) $missing[] = 'the late return fee per hour';
         if ($missing) {
             throw ValidationException::withMessages(['status' => 'Almost there! Please add '.implode(', ', $missing).' before submitting.']);
         }

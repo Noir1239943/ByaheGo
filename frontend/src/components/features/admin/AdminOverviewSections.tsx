@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useSearchParams } from 'react-router'
-import { ArrowRight, BadgeCheck, Banknote, Car, ChevronRight, Gavel, Headset, Store, TrendingDown, TrendingUp } from 'lucide-react'
+import { ArrowRight, BadgeCheck, Ban, Banknote, Car, ChevronRight, Gavel, Headset, Store, TrendingDown, TrendingUp } from 'lucide-react'
 import { BarChart } from '@/components/common/BarChart'
 import { ErrorState, ListSkeleton } from '@/components/common/States'
 import { StatusBadge } from '@/components/common/StatusBadge'
@@ -71,6 +71,7 @@ export function AdminRevenueSection() {
     { to: '/admin/host-applications', icon: Store, label: 'Host applications', sub: 'People who want to host', n: a.host_applications },
     { to: '/admin/disputes', icon: Gavel, label: 'Open disputes', sub: 'Damage, theft and incidents', n: a.disputes },
     { to: '/admin/payouts', icon: Banknote, label: 'Payouts due', sub: 'Host earnings to send', n: a.payouts },
+    { to: '/admin/bookings?status=flagged', icon: Ban, label: 'Trips needing a decision', sub: 'A renter or host was blocked', n: a.flagged_bookings },
     { to: '/admin/support', icon: Headset, label: 'Support messages', sub: 'Waiting for a reply', n: a.support },
   ]
   const urgent = items.reduce((s, i) => s + i.n, 0)
@@ -115,7 +116,7 @@ export function BookingsTable({ rows, empty }: { rows: BookingRow[]; empty?: Rea
         { key: 'trip', header: 'Trip', cell: (b) => <><p className="whitespace-nowrap">{formatRange(b.pickup_at, b.return_at)}</p><p className="text-xs text-ink-500">{b.pickup_label.split(',').slice(-1)[0]}</p></> },
         { key: 'total', header: 'Total', cell: (b) => <span className="font-semibold">{peso(b.total)}</span> },
         { key: 'payment', header: 'Payment', cell: (b) => <StatusBadge status={b.payment_status} /> },
-        { key: 'status', header: 'Status', cell: (b) => <div className="flex flex-col items-start gap-1"><StatusBadge status={tripStatus(b)} />{b.has_open_incident && <Badge tone="danger">Disputed</Badge>}</div> },
+        { key: 'status', header: 'Status', cell: (b) => <div className="flex flex-col items-start gap-1"><StatusBadge status={tripStatus(b)} />{b.has_open_incident && <Badge tone="danger">Disputed</Badge>}{b.admin_flag && <Badge tone="warning" title={b.admin_flag_note ?? undefined}>{b.admin_flag === 'host_blocked' ? 'Host blocked' : 'Renter blocked'}</Badge>}</div> },
       ]}
     />
   )

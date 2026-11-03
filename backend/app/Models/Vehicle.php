@@ -13,7 +13,7 @@ class Vehicle extends Model
         'host_id', 'make', 'model', 'year', 'type', 'transmission', 'fuel', 'seats', 'color', 'color_hex', 'plate_number',
         'description', 'features', 'daily_rate', 'weekly_rate', 'with_driver_available', 'driver_fee_per_day', 'instant_book',
         'delivery_available', 'delivery_fee', 'pet_friendly', 'min_days', 'security_deposit', 'late_fee_per_hour', 'pickup_type',
-        'hub_id', 'pickup_address', 'city', 'lat', 'lng', 'or_media_id', 'cr_media_id', 'status', 'rejection_reason',
+        'hub_id', 'pickup_address', 'city', 'lat', 'lng', 'or_media_id', 'cr_media_id', 'ctpl_media_id', 'ctpl_expiry', 'grace_minutes', 'fuel_policy', 'status', 'rejection_reason',
         'submitted_at', 'approved_at', 'rating_avg', 'rating_count', 'trips_count',
     ];
 
@@ -47,6 +47,7 @@ class Vehicle extends Model
         'rating_avg' => 'float',
         'submitted_at' => 'datetime',
         'approved_at' => 'datetime',
+        'ctpl_expiry' => 'date',
     ];
 
     public function host(): BelongsTo { return $this->belongsTo(User::class, 'host_id'); }
@@ -62,7 +63,7 @@ class Vehicle extends Model
 
     public function scopeLive(Builder $q): Builder
     {
-        return $q->where('status', 'live')->whereHas('host', fn ($h) => $h->where('status', 'active'));
+        return $q->where('status', 'live')->whereHas('host', fn ($h) => $h->usable());
     }
 
     public function scopeOverlapping(Builder $q, $from, $to): Builder

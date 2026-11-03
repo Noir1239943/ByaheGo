@@ -6,10 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\DriverLicense;
 use App\Models\HostApplication;
+use App\Models\AdminAuditLog;
 use App\Models\User;
+use App\Services\AccountStatusService;
 use App\Services\VerificationDecider;
 use App\Support\Notifier;
 use App\Support\Present;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -50,23 +53,36 @@ class AdminUserController extends Controller
         ]);
     }
 
-    public function suspend(Request $request, int $id)
+    protected function blockable(Request $request, int $id): User
     {
-        $data = $request->validate(['reason' => ['required', 'string', 'max:200']], ['reason.required' => 'Please give a reason for putting this account on hold.']);
         $user = User::findOrFail($id);
-        if ($user->isAdmin()) throw ValidationException::withMessages(['user' => 'Admin accounts can\'t be suspended here.']);
-        $user->update(['status' => 'suspended', 'suspended_reason' => $data['reason'], 'suspended_at' => now()]);
-        $user->tokens()->delete();
-        $user->vehicles()->where('status', 'live')->update(['status' => 'paused']);
-        return response()->json(['user' => Present::user($user->fresh())]);
+        if ($user->isAdmin()) throw ValidationException::withMessages(['user' => 'Admin accounts can\'t be suspended or revoked here.']);
+        if ($user->id === $request->user()->id) throw ValidationException::withMessages(['user' => 'You can\'t block your own account.']);
+        return $user;
     }
 
-    public function reinstate(int $id)
+    /** Temporary: ends on the chosen date, then the account works again by itself. */
+    public function suspend(Request $request, AccountStatusService $accounts, int $id)
     {
-        $user = User::findOrFail($id);
-        $user->update(['status' => 'active', 'suspended_reason' => null, 'suspended_at' => null]);
-        Notifier::send($user, 'Your account is active again', 'Welcome back! You can book and host on ByaheGo again.', '/', 'success');
-        return response()->json(['user' => Present::user($user->fresh())]);
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'max:200'],
+            'until' => ['required', 'date', 'after:now', 'before:'.now()->addYear()->toDateString()],
+        ], ['reason.required' => 'Please give a reason. The user will see it.', 'until.required' => 'Choose the date the suspension ends.', 'until.after' => 'The end date must be in the future.', 'until.before' => 'A suspension can last up to one year. Use revoke for a permanent block.']);
+        $user = $accounts->suspend($this->blockable($request, $id), $request->user(), $data['reason'], Carbon::parse($data['until'], 'Asia/Manila')->endOfDay());
+        return response()->json(['user' => Present::user($user)]);
+    }
+
+    /** Permanent. The person is signed out everywhere and can only come back if an admin reinstates them. */
+    public function revoke(Request $request, AccountStatusService $accounts, int $id)
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'max:200']], ['reason.required' => 'Please give a reason. The user will see it.']);
+        return response()->json(['user' => Present::user($accounts->revoke($this->blockable($request, $id), $request->user(), $data['reason']))]);
+    }
+
+    public function reinstate(Request $request, AccountStatusService $accounts, int $id)
+    {
+        $data = $request->validate(['note' => ['nullable', 'string', 'max:200']]);
+        return response()->json(['user' => Present::user($accounts->reinstate(User::findOrFail($id), $request->user(), $data['note'] ?? null))]);
     }
 
     public function revokeVerification(Request $request, int $id)
@@ -75,6 +91,7 @@ class AdminUserController extends Controller
         $user = User::with('latestLicense')->findOrFail($id);
         $user->latestLicense?->update(['status' => 'revoked', 'rejection_reason' => $data['reason'], 'reviewed_by' => $request->user()->id, 'reviewed_at' => now()]);
         $user->update(['verification_status' => 'unverified']);
+        AdminAuditLog::record($request->user(), 'verification.revoke', $user, $data['reason']);
         Notifier::send($user, 'Please verify your license again', 'Your license verification was revoked: '.$data['reason'], '/verify', 'warning');
         return response()->json(['user' => Present::user($user->fresh())]);
     }
@@ -104,6 +121,7 @@ class AdminUserController extends Controller
         $license->update(['status' => 'approved', 'reviewed_by' => $request->user()->id, 'reviewed_at' => now()]);
         $license->user->update(['verification_status' => 'verified']);
         Notifier::send($license->user, 'You\'re verified!', 'Your driver\'s license was approved. You can now book self-drive trips.', '/vehicles', 'success');
+        AdminAuditLog::record($request->user(), 'verification.approve', $license);
         return response()->json(Present::license($license->fresh(['user', 'reviewer']), true));
     }
 
@@ -125,6 +143,7 @@ class AdminUserController extends Controller
             throw ValidationException::withMessages(['decision' => 'The submission already has that outcome.']);
         }
         $decider->override($license, $request->user(), $data['decision'], $data['note']);
+        AdminAuditLog::record($request->user(), 'verification.override', $license, $data['note'], ['decision' => $data['decision']]);
         return response()->json(Present::license($license->fresh(['user', 'reviewer', 'overrider', 'decisions.actor']), true));
     }
 
@@ -135,6 +154,7 @@ class AdminUserController extends Controller
         if ($license->status !== 'pending') throw ValidationException::withMessages(['status' => 'This submission was already reviewed.']);
         $license->update(['status' => 'rejected', 'rejection_reason' => $data['reason'], 'reviewed_by' => $request->user()->id, 'reviewed_at' => now()]);
         $license->user->update(['verification_status' => 'rejected']);
+        AdminAuditLog::record($request->user(), 'verification.reject', $license, $data['reason']);
         Notifier::send($license->user, 'We couldn\'t verify your license', $data['reason'].' Please upload your documents again.', '/verify', 'danger');
         return response()->json(Present::license($license->fresh(['user', 'reviewer']), true));
     }
@@ -158,10 +178,12 @@ class AdminUserController extends Controller
             'payout_method' => $app->payout_method,
             'payout_account_name' => $app->payout_account_name,
             'payout_account_number' => $app->payout_account_number,
+            'payout_bank' => $app->payout_bank,
             'phone' => $app->user->phone ?: $app->phone,
             'city' => $app->user->city ?: $app->city,
         ]);
         Notifier::send($app->user, 'Welcome, host!', 'Your host application was approved. List your first vehicle from your host dashboard.', '/host', 'success');
+        AdminAuditLog::record($request->user(), 'host_application.approve', $app);
         return response()->json(Present::hostApplication($app->fresh('user'), true));
     }
 
@@ -172,6 +194,7 @@ class AdminUserController extends Controller
         if ($app->status !== 'pending') throw ValidationException::withMessages(['status' => 'This application was already reviewed.']);
         $app->update(['status' => 'rejected', 'admin_notes' => $data['notes'], 'reviewed_by' => $request->user()->id, 'reviewed_at' => now()]);
         Notifier::send($app->user, 'Host application update', 'We couldn\'t approve your application: '.$data['notes'], '/account/host-application', 'warning');
+        AdminAuditLog::record($request->user(), 'host_application.reject', $app, $data['notes']);
         return response()->json(Present::hostApplication($app->fresh('user'), true));
     }
 }

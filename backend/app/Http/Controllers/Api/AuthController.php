@@ -4,12 +4,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\AccountStatusService;
 use App\Support\Notifier;
 use App\Support\Present;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Password as PasswordBroker;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
 
@@ -46,53 +46,41 @@ class AuthController extends Controller
         if (! $user || ! $user->password || ! Hash::check($data['password'], $user->password)) {
             throw ValidationException::withMessages(['login' => 'Incorrect username/email or password.']);
         }
-        if ($user->isSuspended()) {
-            throw ValidationException::withMessages(['login' => 'Your account is on hold'.($user->suspended_reason ? " ({$user->suspended_reason})" : '').'. Please contact support.']);
+        $user = app(AccountStatusService::class)->liftIfExpired($user);
+        if ($user->isBlocked()) {
+            return response()->json(['message' => $user->blockMessage(), 'code' => 'account_blocked', 'block' => $user->blockInfo()], 403);
         }
         $user->update(['last_login_at' => now()]);
 
         return response()->json(['token' => $user->createToken('web')->plainTextToken, 'user' => Present::user($user)]);
     }
 
-    /** Sign in with Google: verifies the ID token from Google Identity Services. */
-    public function google(Request $request)
+    /** Always answers the same way, so nobody can use this form to find out which emails have accounts. */
+    public function forgotPassword(Request $request)
     {
-        $data = $request->validate(['credential' => ['required', 'string']]);
-        $clientId = config('services.google.client_id');
-        if (! $clientId) {
-            throw ValidationException::withMessages(['credential' => 'Google sign-in isn\'t set up yet. Please use your username and password.']);
-        }
-        $res = Http::timeout(10)->get('https://oauth2.googleapis.com/tokeninfo', ['id_token' => $data['credential']]);
-        $info = $res->json();
-        if (! $res->ok() || ($info['aud'] ?? null) !== $clientId || ! in_array($info['iss'] ?? '', ['accounts.google.com', 'https://accounts.google.com'], true)
-            || ($info['email_verified'] ?? 'false') !== 'true' && ($info['email_verified'] ?? false) !== true) {
-            throw ValidationException::withMessages(['credential' => 'We couldn\'t verify your Google account. Please try again.']);
-        }
+        $data = $request->validate(['email' => ['required', 'email']], ['email.required' => 'Enter the email you signed up with.', 'email.email' => 'Enter a valid email address.']);
+        PasswordBroker::sendResetLink(['email' => strtolower($data['email'])]);
+        return response()->json(['message' => 'If an account exists for that email, we\'ve sent a link to reset your password.']);
+    }
 
-        $email = strtolower($info['email']);
-        $user = User::where('google_id', $info['sub'])->orWhere('email', $email)->first();
-        if (! $user) {
-            $base = Str::of(Str::before($email, '@'))->replaceMatches('/[^A-Za-z0-9_]/', '')->limit(20, '')->value() ?: 'rider';
-            $username = $base;
-            while (User::where('username', $username)->exists()) $username = $base.random_int(10, 9999);
-            $user = User::create([
-                'name' => $info['name'] ?? $base,
-                'username' => $username,
-                'email' => $email,
-                'google_id' => $info['sub'],
-                'email_verified_at' => now(),
-                'role' => 'renter',
-            ]);
-            Notifier::send($user, 'Welcome to ByaheGo!', 'Verify your driver\'s license once and book self-drive trips in minutes.', '/verify', 'success');
-        } elseif (! $user->google_id) {
-            $user->update(['google_id' => $info['sub']]);
+    public function resetPassword(Request $request)
+    {
+        $data = $request->validate([
+            'token' => ['required', 'string'],
+            'email' => ['required', 'email'],
+            'password' => ['required', 'confirmed', Password::min(8)->letters()->numbers()],
+        ]);
+        $status = PasswordBroker::reset(
+            ['email' => strtolower($data['email']), 'password' => $data['password'], 'password_confirmation' => $request->input('password_confirmation'), 'token' => $data['token']],
+            function (User $user, string $password) {
+                $user->forceFill(['password' => $password])->save();
+                $user->tokens()->delete(); // sign out everywhere
+            },
+        );
+        if ($status !== PasswordBroker::PASSWORD_RESET) {
+            throw ValidationException::withMessages(['email' => 'This reset link is invalid or has expired. Request a new one.']);
         }
-        if ($user->isSuspended()) {
-            throw ValidationException::withMessages(['credential' => 'Your account is on hold. Please contact support.']);
-        }
-        $user->update(['last_login_at' => now()]);
-
-        return response()->json(['token' => $user->createToken('web')->plainTextToken, 'user' => Present::user($user)]);
+        return response()->json(['message' => 'Your password was updated. You can log in now.']);
     }
 
     public function logout(Request $request)
@@ -103,6 +91,6 @@ class AuthController extends Controller
 
     public function config()
     {
-        return response()->json(['google_enabled' => (bool) config('services.google.client_id')]);
+        return response()->json(['google_enabled' => SocialAuthController::enabled('google'), 'facebook_enabled' => SocialAuthController::enabled('facebook')]);
     }
 }
