@@ -73,7 +73,9 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::get('bookings', [BookingController::class, 'index']);
     Route::post('bookings', [BookingController::class, 'store'])->middleware('throttle:20,1');
     Route::get('bookings/{reference}', [BookingController::class, 'show']);
+    Route::post('vehicles/{id}/agreement', [BookingController::class, 'agreementPreview'])->whereNumber('id');
     Route::post('bookings/{reference}/cancel', [BookingController::class, 'cancel']);
+    Route::get('bookings/{reference}/agreement.pdf', [BookingController::class, 'agreementPdf']);
     Route::post('bookings/{reference}/pay-balance', [BookingController::class, 'payBalance']);
     Route::post('bookings/{reference}/review', [BookingController::class, 'review']);
     Route::post('bookings/{reference}/incidents', [BookingController::class, 'reportIncident']);
@@ -95,6 +97,8 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::delete('vehicles/{id}/blocked-dates/{blockId}', [HostVehicleController::class, 'unblockDates'])->whereNumber(['id', 'blockId']);
         Route::get('bookings', [HostBookingController::class, 'index']);
         Route::get('bookings/{reference}', [HostBookingController::class, 'show']);
+        Route::get('bookings/{reference}/agreement.pdf', [HostBookingController::class, 'agreementPdf']);
+        Route::post('bookings/{reference}/cancel', [HostBookingController::class, 'cancel']);
         Route::post('bookings/{reference}/pickup', [HostBookingController::class, 'pickup']);
         Route::post('bookings/{reference}/return', [HostBookingController::class, 'return']);
         Route::post('bookings/{reference}/incidents', [HostBookingController::class, 'reportIncident']);
@@ -125,6 +129,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::post('listings/{id}/suspend', [AdminListingController::class, 'suspend'])->whereNumber('id');
         Route::get('bookings', [AdminBookingController::class, 'index']);
         Route::get('bookings/{reference}', [AdminBookingController::class, 'show']);
+        Route::get('bookings/{reference}/agreement.pdf', [AdminBookingController::class, 'agreementPdf']);
         Route::post('bookings/{reference}/cancel', [AdminBookingController::class, 'cancel']);
         Route::post('bookings/{reference}/refund', [AdminBookingController::class, 'refund']);
         Route::post('bookings/{reference}/note', [AdminBookingController::class, 'note']);

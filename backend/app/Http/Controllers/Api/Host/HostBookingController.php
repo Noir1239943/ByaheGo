@@ -59,6 +59,19 @@ class HostBookingController extends Controller
         ];
     }
 
+    public function agreementPdf(Request $request, string $reference, \App\Services\AgreementService $agreements)
+    {
+        return $agreements->download($this->own($request, $reference));
+    }
+
+    /** A host can cancel at any time. The renter always gets everything back and the cancellation is counted on the host. */
+    public function cancel(Request $request, string $reference)
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'min:5', 'max:200']], ['reason.required' => 'Tell the renter why you are cancelling.']);
+        $booking = $this->bookings->cancel($this->own($request, $reference), 'host', $data['reason'], $request->user());
+        return response()->json(Present::booking($booking, 'host'));
+    }
+
     public function pickup(Request $request, string $reference)
     {
         $data = $request->validate($this->inspectionRules());

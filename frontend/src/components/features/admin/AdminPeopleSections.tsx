@@ -106,7 +106,7 @@ export function AdminUserDetailSection() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Completed trips" value={stats.trips} />
         <StatCard label="Total spent" value={peso(stats.spent)} />
-        <StatCard label="Cancellations" value={stats.cancellations} tone="accent" />
+        <StatCard label="Cancellations" value={stats.cancellations} sub={u.host_cancellations ? `${u.host_cancellations} cancelled as a host` : undefined} tone="accent" />
         <StatCard label="Host earnings" value={peso(stats.host_earnings)} sub={`${stats.vehicles} vehicles`} tone="info" />
       </div>
       <div className="grid gap-5 xl:grid-cols-[1fr_340px]">

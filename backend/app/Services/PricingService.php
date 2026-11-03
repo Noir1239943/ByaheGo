@@ -62,6 +62,7 @@ class PricingService
             'total' => $total,
             'security_deposit' => $vehicle->security_deposit,
             'due_now' => $total + $vehicle->security_deposit,
+            'cancellation_fee' => min((int) Settings::get('cancellation_fee'), $total),
             'free_cancellation_until' => $pickup->copy()->subHours((int) Settings::get('cancellation_cutoff_hours'))->toIso8601String(),
         ];
     }
@@ -70,7 +71,9 @@ class PricingService
     public function lateFee(Vehicle $vehicle, CarbonInterface $scheduledReturn, CarbonInterface $actualReturn): array
     {
         $minutesLate = $scheduledReturn->diffInMinutes($actualReturn, false);
-        if ($minutesLate <= Settings::get('late_grace_minutes')) {
+        // Each listing sets its own grace period; the platform setting is only the fallback.
+        $grace = $vehicle->grace_minutes ?? Settings::get('late_grace_minutes');
+        if ($minutesLate <= $grace) {
             return ['hours' => 0, 'fee' => 0];
         }
         $hours = (int) ceil($minutesLate / 60);

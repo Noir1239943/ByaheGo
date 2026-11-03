@@ -53,6 +53,7 @@ class Present
             'city' => $u->city,
             'is_admin' => $u->isAdmin(),
             'is_super_admin' => (bool) $u->is_super_admin,
+            'host_cancellations' => (int) $u->host_cancellations,
             'is_host' => $u->isHost(),
             'suspended_reason' => $u->suspended_reason,
             'suspended_until' => $u->suspended_until?->toIso8601String(),
@@ -120,6 +121,8 @@ class Present
             'late_fee_per_hour' => $v->late_fee_per_hour,
             'delivery_fee' => $v->delivery_fee,
             'min_days' => $v->min_days,
+            'grace_minutes' => $v->grace_minutes,
+            'fuel_policy' => $v->fuel_policy,
             'status' => $v->status,
             'pickup' => [
                 'type' => $v->pickup_type,
@@ -244,7 +247,7 @@ class Present
 
     public static function booking(Booking $b, string $viewer = 'renter'): array
     {
-        $b->loadMissing(['vehicle.hub', 'vehicle.photos', 'renter', 'host', 'payments.booking', 'inspections', 'incidents.reporter', 'review']);
+        $b->loadMissing(['vehicle.hub', 'vehicle.photos', 'renter', 'host', 'payments.booking', 'inspections', 'incidents.reporter', 'review', 'agreement']);
         $plan = Protection::get($b->protection_plan);
         $service = app(BookingService::class);
         $hideExactPickup = $b->status === 'cancelled' && $viewer === 'renter';
@@ -282,7 +285,17 @@ class Present
             'driver' => ['name' => $b->driver_name, 'phone' => $b->driver_phone, 'email' => $b->driver_email, 'license_no' => $b->driver_license_no],
             'payment_method' => $b->payment_method,
             'payment_method_label' => PaymentGateway::METHODS[$b->payment_method] ?? $b->payment_method,
-            'agreement' => ['version' => $b->agreement_version, 'accepted_at' => $b->agreement_accepted_at?->toIso8601String()],
+            'agreement' => [
+                'version' => $b->agreement_version,
+                'accepted_at' => $b->agreement_accepted_at?->toIso8601String(),
+                'has_copy' => $b->agreement !== null,
+                'signer_name' => $b->agreement?->signer_name,
+                'hash' => $b->agreement?->hash,
+                'text' => $b->agreement?->text,
+            ],
+            'cancellation_fee' => (int) $b->cancellation_fee,
+            // What a renter would be charged for cancelling now (0 = free). The platform fee never exceeds the trip total.
+            'cancellation_fee_if_cancelled' => min((int) Settings::get('cancellation_fee'), (int) $b->total),
             'cancelled_at' => $b->cancelled_at?->toIso8601String(),
             'cancelled_by' => $b->cancelled_by,
             'cancel_reason' => $b->cancel_reason,

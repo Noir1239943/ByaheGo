@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router'
-import { AlertTriangle, ArrowLeft, BadgeCheck, CalendarDays, ClipboardCheck, KeyRound, MapPin, Phone, Undo2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, BadgeCheck, CalendarDays, ClipboardCheck, Download, KeyRound, MapPin, Phone, Undo2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { InfoRow, KeyValue } from '@/components/common/InfoRow'
 import { ErrorState, PageLoader } from '@/components/common/States'
@@ -14,6 +14,7 @@ import { InspectionsList } from '@/components/features/bookings/InspectionsList'
 import { TripTimeline } from '@/components/features/bookings/TripTimeline'
 import { Alert, Avatar, Button, Card, CardBody, CardHeader, Checkbox, Input, Modal, Select, Textarea } from '@/components/ui'
 import { getErrorMessage, getFieldErrors } from '@/lib/api'
+import { downloadFile } from '@/lib/download'
 import { INSPECTION_ITEMS } from '@/lib/constants'
 import { formatDate, formatDateTime, localToIso, peso, toLocalInput } from '@/lib/format'
 import { hostService } from '@/services/host'
@@ -24,7 +25,7 @@ export function HostBookingDetailSection() {
   const { reference = '' } = useParams()
   const qc = useQueryClient()
   const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['host', 'booking', reference], queryFn: () => hostService.booking(reference) })
-  const [modal, setModal] = useState<null | 'pickup' | 'return' | 'incident'>(null)
+  const [modal, setModal] = useState<null | 'pickup' | 'return' | 'incident' | 'cancel'>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const blank = (): InspectionForm => ({
     odometer: '', fuel_level: '100', checklist: Object.fromEntries(INSPECTION_ITEMS.map((i) => [i.key, true])), notes: '',
@@ -32,6 +33,7 @@ export function HostBookingDetailSection() {
   })
   const [form, setForm] = useState<InspectionForm>(blank)
   const [incident, setIncident] = useState({ type: 'damage', description: '', amount_claimed: '' })
+  const [cancelReason, setCancelReason] = useState('')
 
   const done = (msg: string) => {
     toast.success(msg)
@@ -49,6 +51,7 @@ export function HostBookingDetailSection() {
     onSuccess: (r) => done(r.deposit_status === 'on_hold' ? 'Return recorded. Your damage report is with our team.' : r.late_fee > 0 ? `Return recorded. Late fee of ${peso(r.late_fee)} added to your payout.` : 'Return recorded. Your payout is scheduled.'),
     onError: onErr,
   })
+  const cancelTrip = useMutation({ mutationFn: () => hostService.cancelBooking(reference, cancelReason), onSuccess: () => done('Booking cancelled. The renter gets a full refund.'), onError: onErr })
   const report = useMutation({ mutationFn: () => hostService.incident(reference, { ...incident, amount_claimed: incident.amount_claimed ? Number(incident.amount_claimed) : 0 }), onSuccess: () => done('Report sent to our team.'), onError: onErr })
 
   if (isLoading) return <PageLoader />
@@ -103,6 +106,8 @@ export function HostBookingDetailSection() {
             {b.status === 'confirmed' && <Button icon={<KeyRound className="size-4" />} onClick={() => { setForm(blank()); setModal('pickup') }}>Start handover</Button>}
             {b.status === 'active' && <Button icon={<Undo2 className="size-4" />} onClick={() => { setForm(blank()); setModal('return') }}>Record return</Button>}
             {['active', 'completed'].includes(b.status) && <Button variant="secondary" icon={<AlertTriangle className="size-4" />} onClick={() => setModal('incident')}>Report incident</Button>}
+            {b.agreement.has_copy && <Button variant="secondary" icon={<Download className="size-4" />} onClick={() => void downloadFile(`/host/bookings/${b.reference}/agreement.pdf`, `ByaheGo-agreement-${b.reference}.pdf`).catch((e) => toast.error(getErrorMessage(e)))}>Agreement PDF</Button>}
+            {['confirmed', 'active'].includes(b.status) && <Button variant="danger-outline" icon={<XCircle className="size-4" />} onClick={() => { setCancelReason(''); setModal('cancel') }}>Cancel booking</Button>}
           </div>
         </div>
         <div className="border-t border-line-100 bg-page/50 p-5 sm:p-6"><TripTimeline b={b} /></div>
@@ -161,6 +166,9 @@ export function HostBookingDetailSection() {
       </Modal>
       <Modal open={modal === 'return'} onClose={() => setModal(null)} title="Record return" description="Check the vehicle with the renter. Late fees are calculated automatically from the actual return time." size="lg" footer={<Button loading={ret.isPending} disabled={!form.odometer} onClick={() => ret.mutate()}>Confirm return</Button>}>
         {inspectionFields('return')}
+      </Modal>
+      <Modal open={modal === 'cancel'} onClose={() => setModal(null)} title="Cancel this booking?" description="The renter gets a full refund of the trip and the deposit, whenever you cancel. We record every host cancellation, and too many can put your listings under review." size="sm" footer={<><Button variant="secondary" onClick={() => setModal(null)}>Keep booking</Button><Button variant="danger" loading={cancelTrip.isPending} disabled={cancelReason.trim().length < 5} onClick={() => cancelTrip.mutate()}>Cancel and refund renter</Button></>}>
+        <Textarea label="Why are you cancelling? (the renter sees this)" rows={3} value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} error={errors.reason} />
       </Modal>
       <Modal open={modal === 'incident'} onClose={() => setModal(null)} title="Report an incident" description="For theft or an emergency, call the PNP (911) first, then our 24/7 line." footer={<Button variant="danger" loading={report.isPending} disabled={incident.description.trim().length < 10} onClick={() => report.mutate()}>Send report</Button>}>
         <div className="space-y-4">

@@ -14,6 +14,9 @@ class Settings
         'cancellation_cutoff_hours' => 24, // free cancellation until this many hours before pick-up
         'late_fee_daily_cap' => 1.5,      // late fees are capped at this multiple of the daily rate per 24h late
         'deposit_release_days' => 3,
+        'default_security_deposit' => 3000, // pesos; used when a host does not set a deposit on a listing
+        'cancellation_fee' => 0,          // pesos kept when a renter cancels in time (0 = fully free)
+        'pending_booking_minutes' => 30,  // an unpaid pending booking holds the dates this long
     ];
 
     public const LABELS = [
@@ -23,6 +26,9 @@ class Settings
         'cancellation_cutoff_hours' => 'Free cancellation cut-off (hours before pick-up)',
         'late_fee_daily_cap' => 'Late fee cap (× daily rate per day late)',
         'deposit_release_days' => 'Deposit release window (days)',
+        'default_security_deposit' => 'Default security deposit (₱)',
+        'cancellation_fee' => 'Cancellation fee for in-time cancellations (₱)',
+        'pending_booking_minutes' => 'Unpaid booking hold (minutes)',
     ];
 
     protected static ?array $cache = null;

@@ -91,6 +91,10 @@ class AuthController extends Controller
 
     public function config()
     {
-        return response()->json(['google_enabled' => SocialAuthController::enabled('google'), 'facebook_enabled' => SocialAuthController::enabled('facebook')]);
+        return response()->json([
+            'google_enabled' => SocialAuthController::enabled('google'),
+            'facebook_enabled' => SocialAuthController::enabled('facebook'),
+            'default_security_deposit' => (int) \App\Support\Settings::get('default_security_deposit'),
+        ]);
     }
 }

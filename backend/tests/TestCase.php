@@ -95,6 +95,7 @@ abstract class TestCase extends BaseTestCase
             'payment_method' => 'gcash',
             'wallet_number' => '09171234567',
             'agree_terms' => true,
+            'agreement_read_to_end' => true,
             'confirm_age' => true,
         ], $over);
     }
@@ -106,9 +107,17 @@ abstract class TestCase extends BaseTestCase
         return $this;
     }
 
+    /** Books the way the website does: opens the agreement first, then signs the text it was shown with the verified name. */
     protected function book(User $renter, Vehicle $v, array $over = []): TestResponse
     {
-        return $this->as($renter)->postJson('/api/bookings', $this->bookingPayload($v, $over));
+        $payload = $this->bookingPayload($v, $over);
+        if (! isset($payload['signature_name'])) {
+            $preview = $this->as($renter)->postJson("/api/vehicles/{$v->id}/agreement", array_intersect_key($payload, array_flip(['pickup_at', 'return_at', 'rental_type', 'protection_plan'])));
+            // When the preview itself fails (bad dates, ...) the booking call reports the same error before it checks the signature.
+            $payload['signature_name'] = $preview->json('signer_name') ?? 'x';
+            $payload['agreement_hash'] = $preview->json('hash') ?? str_repeat('0', 64);
+        }
+        return $this->as($renter)->postJson('/api/bookings', $payload);
     }
 
     protected function fakeImage(string $name = 'photo.jpg', int $w = 1200, int $h = 800): UploadedFile

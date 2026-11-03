@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router'
-import { ArrowLeft, BadgeCheck, CalendarDays, Mail, MapPin, MessageSquare, Phone, Receipt, RotateCcw, XCircle } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, CalendarDays, Download, Mail, MapPin, MessageSquare, Phone, Receipt, RotateCcw, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { InfoRow, KeyValue } from '@/components/common/InfoRow'
 import { ErrorState, PageLoader } from '@/components/common/States'
@@ -15,6 +15,7 @@ import { PaymentsList } from '@/components/features/bookings/PaymentsList'
 import { TripTimeline } from '@/components/features/bookings/TripTimeline'
 import { Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, Checkbox, Input, Modal, Select, Textarea } from '@/components/ui'
 import { getErrorMessage } from '@/lib/api'
+import { downloadFile } from '@/lib/download'
 import { formatDate, formatDateTime, peso, timeAgo } from '@/lib/format'
 import { adminService } from '@/services/admin'
 import type { UserBrief } from '@/types'
@@ -74,6 +75,7 @@ export function AdminBookingDetailSection() {
             <Button variant="secondary" size="sm" icon={<MessageSquare className="size-4" />} onClick={() => setModal('message')}>Message</Button>
             <Button variant="secondary" size="sm" icon={<RotateCcw className="size-4" />} disabled={!b.refundable} onClick={() => setModal('refund')}>Issue refund</Button>
             <Button variant="secondary" size="sm" icon={<Receipt className="size-4" />} to={`/invoice/${b.reference}`}>Invoice</Button>
+            {b.agreement.has_copy && <Button variant="secondary" size="sm" icon={<Download className="size-4" />} onClick={() => void downloadFile(`/admin/bookings/${b.reference}/agreement.pdf`, `ByaheGo-agreement-${b.reference}.pdf`).catch((e) => toast.error(getErrorMessage(e)))}>Agreement PDF</Button>}
             {['confirmed', 'active'].includes(b.status) && <Button variant="danger-outline" size="sm" icon={<XCircle className="size-4" />} onClick={() => setModal('cancel')}>Cancel booking</Button>}
           </div>
         </div>
@@ -88,7 +90,7 @@ export function AdminBookingDetailSection() {
               <InfoRow icon={<CalendarDays />} label="Pick-up" value={formatDateTime(b.pickup_at)} />
               <InfoRow icon={<CalendarDays />} label="Return" value={formatDateTime(b.return_at)} />
               <InfoRow icon={<MapPin />} label="Location" value={b.pickup_label} />
-              <InfoRow icon={<BadgeCheck />} label="Protection · agreement" value={<>{b.protection.name}<span className="block text-xs font-normal text-ink-500">v{b.agreement.version} accepted {formatDateTime(b.agreement.accepted_at)}</span></>} />
+              <InfoRow icon={<BadgeCheck />} label="Protection · agreement" value={<>{b.protection.name}<span className="block text-xs font-normal text-ink-500">v{b.agreement.version} signed {formatDateTime(b.agreement.accepted_at)}{b.agreement.signer_name ? ` by ${b.agreement.signer_name}` : ''}</span></>} />
             </CardBody>
           </Card>
           <div className="grid gap-5 md:grid-cols-2">

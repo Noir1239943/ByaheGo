@@ -58,6 +58,7 @@ class DatabaseSeeder extends Seeder
             $this->seedBookings($vehicles);
             $this->seedExtras($vehicles);
             $this->seedAccountsAndAudit();
+            $this->seedAgreements();
         });
         Model::reguard();
         Settings::flush();
@@ -325,6 +326,13 @@ class DatabaseSeeder extends Seeder
     }
 
     /** Sign-in links, blocked accounts and a trail of admin actions for the audit log screen. */
+    /** Every demo booking gets a signed agreement, so the PDF downloads work on demo data too. */
+    public function seedAgreements(): void
+    {
+        $agreements = app(\App\Services\AgreementService::class);
+        Booking::with('agreement')->each(fn (Booking $b) => $agreements->backfill($b));
+    }
+
     protected function seedAccountsAndAudit(): void
     {
         SocialAccount::create(['user_id' => $this->users['andrea.santos']->id, 'provider' => 'google', 'provider_user_id' => '110248113551']);

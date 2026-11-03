@@ -1,22 +1,24 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
-import { ArrowLeft, Calendar, CreditCard, FileText, KeyRound, Lock, MapPin, ShieldCheck, Smartphone, Wallet } from 'lucide-react'
+import { ArrowLeft, Calendar, CreditCard, KeyRound, Lock, MapPin, ShieldCheck, Smartphone, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 import { PriceBreakdown } from '@/components/common/PriceBreakdown'
-import { RentalAgreement } from '@/components/common/RentalAgreement'
 import { RatingInline } from '@/components/common/RatingStars'
 import { ErrorState, PageLoader } from '@/components/common/States'
 import { VehicleImage } from '@/components/common/VehicleImage'
 import { InfoRow } from '@/components/common/InfoRow'
-import { Alert, Badge, Button, Card, Checkbox, Input, Modal } from '@/components/ui'
+import { Alert, Badge, Button, Card, Checkbox, Input } from '@/components/ui'
 import { useAuth } from '@/hooks/useAuth'
 import { getErrorMessage, getFieldErrors } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { PAYMENT_METHODS } from '@/lib/constants'
 import { formatDateTime, localToIso, peso } from '@/lib/format'
 import { bookingService } from '@/services/bookings'
+import { namesMatch } from '@/lib/agreement'
+import { agreementService } from '@/services/agreement'
 import { vehicleService } from '@/services/vehicles'
+import { SignAgreement, type Signing } from './SignAgreement'
 import type { PaymentMethod, ProtectionKey, RentalType } from '@/types'
 
 const METHOD_ICON = { gcash: Wallet, maya: Wallet, card: CreditCard, google_pay: Smartphone, apple_pay: Smartphone }
@@ -96,10 +98,9 @@ export function CheckoutSection() {
   const [driver, setDriver] = useState({ driver_name: user?.name ?? '', driver_phone: user?.phone ?? '', driver_email: user?.email ?? '' })
   const [method, setMethod] = useState<PaymentMethod>('gcash')
   const [pay, setPay] = useState<Record<string, string>>({ wallet_number: user?.phone ?? '' })
-  const [agree, setAgree] = useState(false)
+  const [signing, setSigning] = useState<Signing>({ readToEnd: false, agree: false, name: '' })
   const [age, setAge] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const [agreementOpen, setAgreementOpen] = useState(false)
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -114,7 +115,10 @@ export function CheckoutSection() {
           ...driver,
           payment_method: method,
           ...pay,
-          agree_terms: agree,
+          agree_terms: signing.agree,
+          agreement_read_to_end: signing.readToEnd,
+          agreement_hash: agreement.data?.hash,
+          signature_name: signing.name,
           confirm_age: type === 'self' ? age : true,
         }),
         new Promise((r) => setTimeout(r, 1200)),
@@ -133,6 +137,16 @@ export function CheckoutSection() {
 
   if (!pickup || !ret) return <div className="container-page py-10"><Alert tone="warning" title="Pick your dates first" action={<Button to={`/vehicles/${vehicleId}`}>Back to vehicle</Button>}>Choose pick-up and return times on the vehicle page.</Alert></div>
   if (vehicle.isLoading || quote.isLoading) return <PageLoader label="Getting your trip ready…" />
+  // The agreement filled in for exactly this trip. Its hash is what the renter signs.
+  const needsId = type === 'self' && user?.verification_status !== 'verified'
+  const agreement = useQuery({
+    queryKey: ['agreement', vehicleId, pickup, ret, type, plan],
+    queryFn: () => agreementService.preview(vehicleId, { pickup_at: localToIso(pickup), return_at: localToIso(ret), rental_type: type, protection_plan: plan }),
+    enabled: !!pickup && !!ret && !!user && !needsId,
+    retry: false,
+    staleTime: 60_000,
+  })
+
   if (vehicle.error) return <div className="container-page py-10"><ErrorState error={vehicle.error} /></div>
   const v = vehicle.data!
   const q = quote.data
@@ -144,7 +158,10 @@ export function CheckoutSection() {
     if (!driver.driver_name.trim()) errs.driver_name = 'Please enter the driver\'s full name.'
     if (!driver.driver_phone.trim()) errs.driver_phone = 'Add a mobile number so your host can reach you.'
     if (type === 'self' && !age) errs.confirm_age = 'Please confirm you\'re at least 21 with a valid license.'
-    if (!agree) errs.agree_terms = 'Please accept the rental agreement to continue.'
+    if (!agreement.data) errs.agreement = 'The rental agreement has not loaded yet.'
+    else if (!signing.readToEnd) errs.agreement_read_to_end = 'Scroll to the end of the rental agreement before you sign.'
+    else if (!signing.agree) errs.agree_terms = 'Please tick "I agree" to continue.'
+    else if (!namesMatch(signing.name, agreement.data.signer_name)) errs.signature_name = `Type your full name exactly as on your verified license: ${agreement.data.signer_name}.`
     setErrors(errs)
     if (Object.keys(errs).length) return toast.error(Object.values(errs)[0])
     mutation.mutate()
@@ -190,15 +207,14 @@ export function CheckoutSection() {
           </Card>
 
           <Card className="p-5 sm:p-6">
-            <h2 className="flex items-center gap-2 font-bold"><FileText className="size-4.5 text-brand" /> Rental agreement</h2>
-            <ul className="mt-3 space-y-2 text-sm text-ink-700">
-              <li>• <b>Damage:</b> with {q?.protection_name ?? 'your plan'}, you pay at most {peso(q?.liability_cap ?? 20000)} for accidental damage.</li>
-              <li>• <b>Theft or missing parts:</b> not covered – you're fully liable and it's reported to the PNP.</li>
-              <li>• <b>Late return:</b> {peso(v.late_fee_per_hour)}/hour after a 60-minute grace period, taken from your deposit.</li>
-              <li>• <b>Deposit:</b> {peso(v.security_deposit)}, returned within 3 days after the return check.</li>
-            </ul>
-            <button type="button" onClick={() => setAgreementOpen(true)} className="mt-3 text-sm font-semibold text-brand hover:underline">Read the full agreement</button>
-            <Checkbox className="mt-4" checked={agree} onChange={(e) => setAgree(e.target.checked)} error={errors.agree_terms} label="I've read and agree to the Rental Agreement, including the damage, theft, late return and cancellation terms." />
+            <SignAgreement
+              agreement={agreement.data}
+              loading={agreement.isLoading || (!agreement.data && !agreement.error && !needsId)}
+              error={agreement.error ? getErrorMessage(agreement.error) : needsId ? 'Verify your driver\'s license first. The agreement is made out in your verified name.' : null}
+              signing={signing}
+              onChange={setSigning}
+              errors={errors}
+            />
           </Card>
 
           <Card className="p-5 sm:p-6">
@@ -207,7 +223,7 @@ export function CheckoutSection() {
               <p className="mt-1 text-sm text-ink-700">Your pick-up is <b>less than a day away</b>, so this booking can't be cancelled for free. Double-check your dates before paying.</p>
             ) : (
               <p className="mt-1 text-sm text-ink-700">
-                Free cancellation until <b>{q ? formatDateTime(q.free_cancellation_until) : '24 hours before pick-up'}</b>. You'll get back everything you paid, including the deposit. After that, trips can't be cancelled in the app.
+                Free cancellation until <b>{q ? formatDateTime(q.free_cancellation_until) : '24 hours before pick-up'}</b>. You'll get back everything you paid, including the deposit{q && q.cancellation_fee > 0 ? `, minus a ${peso(q.cancellation_fee)} cancellation fee` : ''}. After that, trips can't be cancelled in the app.
               </p>
             )}
           </Card>
@@ -244,10 +260,6 @@ export function CheckoutSection() {
           </p>
         </aside>
       </form>
-
-      <Modal open={agreementOpen} onClose={() => setAgreementOpen(false)} title="ByaheGo Rental Agreement" size="lg" footer={<Button onClick={() => { setAgree(true); setAgreementOpen(false) }}>I agree</Button>}>
-        <RentalAgreement deposit={v.security_deposit} />
-      </Modal>
 
       {mutation.isPending && (
         <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-ink-900/50 p-4">

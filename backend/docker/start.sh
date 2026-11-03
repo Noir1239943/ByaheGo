@@ -18,4 +18,8 @@ php artisan db:seed --force
 php artisan config:cache
 php artisan route:cache
 
+# Runs the scheduled jobs (expire unpaid bookings, lift suspensions, settle deposits) next to the web server.
+# On Render's free plan the service sleeps when idle, so jobs also self-heal on the next request (see README).
+php artisan schedule:work >/proc/1/fd/1 2>&1 &
+
 exec apache2-foreground

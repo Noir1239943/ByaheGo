@@ -20,6 +20,7 @@ class Booking extends Model
         'agreement_accepted_at' => 'datetime',
         'settled_at' => 'datetime',
         'cancelled_at' => 'datetime',
+        'expires_at' => 'datetime',
         'pickup_lat' => 'float',
         'pickup_lng' => 'float',
     ];
@@ -33,11 +34,13 @@ class Booking extends Model
     public function incidents(): HasMany { return $this->hasMany(Incident::class)->orderByDesc('id'); }
     public function review(): HasOne { return $this->hasOne(Review::class); }
     public function payout(): HasOne { return $this->hasOne(Payout::class); }
+    public function agreement(): HasOne { return $this->hasOne(BookingAgreement::class); }
 
-    /** Bookings that block a vehicle's calendar. */
+    /** Bookings that block a vehicle's calendar: confirmed or active ones, and unpaid pending ones until their hold runs out. */
     public function scopeBlocking(Builder $q): Builder
     {
-        return $q->whereIn('status', ['confirmed', 'active']);
+        return $q->where(fn ($w) => $w->whereIn('status', ['confirmed', 'active'])
+            ->orWhere(fn ($p) => $p->where('status', 'pending')->where('expires_at', '>', now())));
     }
 
     public function getRouteKeyName(): string

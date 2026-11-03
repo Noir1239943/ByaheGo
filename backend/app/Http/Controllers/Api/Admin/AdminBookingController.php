@@ -63,6 +63,11 @@ class AdminBookingController extends Controller
         ]);
     }
 
+    public function agreementPdf(string $reference, \App\Services\AgreementService $agreements)
+    {
+        return $agreements->download($this->find($reference));
+    }
+
     public function show(string $reference)
     {
         return response()->json(Present::booking($this->find($reference), 'admin'));

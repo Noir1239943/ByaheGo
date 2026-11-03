@@ -33,6 +33,7 @@ export const hostService = {
   unblockDates: (id: number, blockId: number) => api.delete(`/host/vehicles/${id}/blocked-dates/${blockId}`),
   bookings: (params: { tab: string; q?: string }) => api.get<{ data: BookingRow[]; counts: Record<string, number> }>('/host/bookings', { params }).then((r) => r.data),
   booking: (reference: string) => api.get<Booking>(`/host/bookings/${reference}`).then((r) => r.data),
+  cancelBooking: (reference: string, reason: string) => api.post<Booking>(`/host/bookings/${reference}/cancel`, { reason }).then((r) => r.data),
   pickup: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/pickup`, body).then((r) => r.data),
   return: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/return`, body).then((r) => r.data),
   incident: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/incidents`, body).then((r) => r.data),

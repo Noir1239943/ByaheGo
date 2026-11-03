@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\BookingConfirmedMail;
 use App\Models\Booking;
 use App\Models\Incident;
 use App\Models\Payment;
@@ -13,13 +14,15 @@ use App\Support\Notifier;
 use App\Support\Settings;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\ValidationException;
 
 class BookingService
 {
-    public const AGREEMENT_VERSION = '2026.1';
+    public const AGREEMENT_VERSION = AgreementService::VERSION;
 
-    public function __construct(protected PricingService $pricing, protected PaymentGateway $gateway) {}
+    public function __construct(protected PricingService $pricing, protected PaymentGateway $gateway, protected AgreementService $agreements) {}
 
     public static function receiptNo(string $prefix = 'OR'): string
     {
@@ -36,7 +39,11 @@ class BookingService
         return 'BG-'.$n;
     }
 
-    public function create(User $renter, Vehicle $vehicle, array $data, ?string $ip = null): Booking
+    /**
+     * $data must carry what the renter e-signed: `signature_name` (typed, must match the verified name) and
+     * `agreement_hash` (the hash of the agreement text they were shown).
+     */
+    public function create(User $renter, Vehicle $vehicle, array $data, ?string $ip = null, ?string $userAgent = null): Booking
     {
         $pickup = Carbon::parse($data['pickup_at']);
         $return = Carbon::parse($data['return_at']);
@@ -55,13 +62,23 @@ class BookingService
             throw ValidationException::withMessages(['verification' => 'Please verify your driver\'s license before booking a self-drive trip.']);
         }
 
-        return DB::transaction(function () use ($renter, $vehicle, $data, $pickup, $return, $rentalType, $ip) {
+        $booking = DB::transaction(function () use ($renter, $vehicle, $data, $pickup, $return, $rentalType, $ip, $userAgent) {
             // Lock the vehicle row so two renters can't grab the same dates at once.
             $vehicle = Vehicle::whereKey($vehicle->id)->lockForUpdate()->firstOrFail();
             if (! $vehicle->isFreeBetween($pickup, $return)) {
                 throw ValidationException::withMessages(['pickup_at' => 'Sorry, someone just booked these dates. Please pick different dates.']);
             }
             $quote = $this->pricing->quote($vehicle, $pickup, $return, $rentalType, $data['protection_plan'] ?? 'standard');
+
+            // E-signature: the typed name must be the verified name, and the text must be the text they were shown.
+            $agreement = $this->agreements->build($vehicle, $renter, $quote, $pickup, $return, $rentalType);
+            if (! $this->agreements->namesMatch((string) ($data['signature_name'] ?? ''), $agreement['signer_name'])) {
+                throw ValidationException::withMessages(['signature_name' => 'Type your full name exactly as it appears on your verified license: '.$agreement['signer_name'].'.']);
+            }
+            if (! hash_equals($agreement['hash'], (string) ($data['agreement_hash'] ?? ''))) {
+                throw ValidationException::withMessages(['agreement' => 'The agreement changed since you opened it (for example the price or dates). Please read it again and sign.']);
+            }
+
             $charge = $this->gateway->charge($data['payment_method'], $quote['due_now'], $data);
 
             $booking = Booking::create([
@@ -95,9 +112,10 @@ class BookingService
                 'driver_license_no' => $rentalType === 'self' ? ($renter->latestLicense?->license_number) : null,
                 'payment_method' => $data['payment_method'],
                 'agreement_accepted_at' => now(),
-                'agreement_version' => self::AGREEMENT_VERSION,
+                'agreement_version' => $agreement['version'],
                 'agreement_ip' => $ip,
             ]);
+            $this->agreements->sign($booking, $agreement, trim((string) $data['signature_name']), $ip, $userAgent, (bool) ($data['agreement_read_to_end'] ?? false));
 
             $booking->payments()->create([
                 'user_id' => $renter->id,
@@ -111,7 +129,7 @@ class BookingService
                 'description' => "Trip {$booking->reference} – {$vehicle->name} (includes ".Money::peso($quote['security_deposit']).' refundable deposit)',
             ]);
 
-            $booking->log('created', 'Booking created and rental agreement v'.self::AGREEMENT_VERSION.' accepted.', $renter->id);
+            $booking->log('created', 'Booking created. Rental agreement v'.$agreement['version'].' e-signed by '.trim((string) $data['signature_name']).'.', $renter->id);
             $booking->log('payment', 'Payment of '.Money::peso($quote['due_now']).' received via '.PaymentGateway::METHODS[$data['payment_method']].'.', $renter->id);
             $booking->log('deposit', 'Security deposit of '.Money::peso($quote['security_deposit']).' placed on hold.');
 
@@ -120,12 +138,58 @@ class BookingService
 
             return $booking;
         });
+
+        $this->sendConfirmationEmails($booking);
+        return $booking;
+    }
+
+    /** A failing mail server must never undo a paid booking, so errors are only logged. */
+    protected function sendConfirmationEmails(Booking $booking): void
+    {
+        $booking->loadMissing(['renter', 'host', 'vehicle', 'agreement']);
+        foreach ([[$booking->renter, false], [$booking->host, true]] as [$to, $forHost]) {
+            try {
+                if ($to?->email) Mail::to($to->email)->send(new BookingConfirmedMail($booking, $to, $forHost));
+            } catch (\Throwable $e) {
+                Log::warning("Could not email {$booking->reference} confirmation to user {$to?->id}: ".$e->getMessage());
+            }
+        }
+    }
+
+    public function freeCancellationUntil(Booking $booking): Carbon
+    {
+        return $booking->pickup_at->copy()->subHours((int) Settings::get('cancellation_cutoff_hours'));
     }
 
     public function canRenterCancel(Booking $booking): bool
     {
-        return $booking->status === 'confirmed'
-            && now()->lessThanOrEqualTo($booking->pickup_at->copy()->subHours((int) Settings::get('cancellation_cutoff_hours')));
+        return $booking->status === 'confirmed' && now()->lessThanOrEqualTo($this->freeCancellationUntil($booking));
+    }
+
+    /** Unpaid pending bookings stop holding the dates once their hold runs out. */
+    public function expirePending(): int
+    {
+        $n = 0;
+        Booking::where('status', 'pending')->where('expires_at', '<=', now())->each(function (Booking $b) use (&$n) {
+            $b->update(['status' => 'cancelled', 'cancelled_at' => now(), 'cancelled_by' => 'system', 'cancel_reason' => 'Payment was not completed in time.', 'expires_at' => null]);
+            $b->log('cancelled', 'Booking expired because payment was not completed in time. The dates are free again.');
+            Notifier::send($b->renter_id, 'Booking expired', "Booking {$b->reference} expired because payment wasn't completed. You can book again any time.", '/vehicles', 'warning');
+            $n++;
+        });
+        return $n;
+    }
+
+    /** A completed trip whose deposit was never settled (for example the settle step failed) is settled once the release window passes. */
+    public function releaseDueDeposits(): int
+    {
+        $n = 0;
+        $cutoff = now()->subDays((int) Settings::get('deposit_release_days'));
+        Booking::where('status', 'completed')->where('deposit_status', 'held')->whereNull('settled_at')->where('actual_return_at', '<=', $cutoff)
+            ->each(function (Booking $b) use (&$n) {
+                $this->settle($b);
+                $n++;
+            });
+        return $n;
     }
 
     public function cancel(Booking $booking, string $by, ?string $reason, ?User $actor = null, bool $refund = true): Booking
@@ -147,12 +211,27 @@ class BookingService
             ]);
             $booking->log('cancelled', 'Booking cancelled by '.$by.($reason ? ": {$reason}" : '.'), $actor?->id);
 
+            if ($by === 'host') {
+                User::whereKey($booking->host_id)->increment('host_cancellations');
+                Notifier::admins('Host cancelled a booking', "{$booking->host->name} cancelled {$booking->reference}. This is their ".$this->ordinal((int) $booking->host->fresh()->host_cancellations).' cancellation.', "/admin/bookings/{$booking->reference}", 'warning');
+            }
+
             if ($refund) {
+                // Only an in-time cancellation by the renter can carry the (optional) platform fee. Host, admin and system cancellations are always free.
+                $fee = $by === 'renter' ? min((int) Settings::get('cancellation_fee'), (int) $booking->total, $this->refundableAmount($booking)) : 0;
+                if ($fee > 0) {
+                    $booking->payments()->create([
+                        'user_id' => $booking->renter_id, 'type' => 'cancellation_fee', 'method' => $booking->payment_method, 'amount' => $fee, 'status' => 'succeeded',
+                        'receipt_no' => self::receiptNo(), 'description' => "Cancellation fee for {$booking->reference}, kept from your payment",
+                    ]);
+                    $booking->update(['cancellation_fee' => $fee]);
+                    $booking->log('fee', 'Cancellation fee of '.Money::peso($fee).' kept from the payment.', $actor?->id);
+                }
                 $refundable = $this->refundableAmount($booking);
                 if ($refundable > 0) {
-                    $this->issueRefund($booking, $refundable, 'Full refund for cancelled trip '.$booking->reference, $actor);
+                    $this->issueRefund($booking, $refundable, ($fee > 0 ? 'Refund (minus cancellation fee) for cancelled trip ' : 'Full refund for cancelled trip ').$booking->reference, $actor);
                 }
-                $booking->update(['deposit_status' => 'refunded', 'payment_status' => 'refunded']);
+                $booking->update(['deposit_status' => 'refunded', 'payment_status' => $fee > 0 ? 'partially_refunded' : 'refunded']);
             }
 
             Notifier::send($booking->renter_id, 'Trip cancelled', "Your booking {$booking->reference} was cancelled.".($refund ? ' Your refund is on its way to your original payment method.' : ''), "/account/trips/{$booking->reference}", 'warning');
@@ -162,11 +241,16 @@ class BookingService
         });
     }
 
+    protected function ordinal(int $n): string
+    {
+        return $n.(in_array($n % 100, [11, 12, 13], true) ? 'th' : [1 => 'st', 2 => 'nd', 3 => 'rd'][$n % 10] ?? 'th');
+    }
+
     public function refundableAmount(Booking $booking): int
     {
         $paid = (int) $booking->payments()->whereIn('type', ['charge', 'balance'])->sum('amount');
         $refunded = (int) $booking->payments()->where('type', 'refund')->sum('amount');
-        $applied = (int) $booking->payments()->whereIn('type', ['late_fee', 'damage'])->sum('amount');
+        $applied = (int) $booking->payments()->whereIn('type', ['late_fee', 'damage', 'cancellation_fee'])->sum('amount');
         return max(0, $paid - $refunded - $applied);
     }
 

@@ -13,6 +13,7 @@ import { cn } from '@/lib/cn'
 import { FEATURE_OPTIONS, VEHICLE_TYPES, typeLabel } from '@/lib/constants'
 import { capitalize, peso } from '@/lib/format'
 import { CITIES } from '@/lib/search'
+import { authService } from '@/services/auth'
 import { hostService } from '@/services/host'
 import { PickupPinField } from './PickupPinField'
 import { vehicleService } from '@/services/vehicles'
@@ -37,7 +38,7 @@ type Form = {
 const EMPTY: Form = {
   type: 'sedan', make: '', model: '', year: String(new Date().getFullYear() - 2), transmission: 'automatic', fuel: 'gasoline', seats: '5', color: '', color_hex: '#E9EDF0',
   description: '', features: ['Air conditioning'], photo_ids: [],
-  daily_rate: '', weekly_rate: '', min_days: '1', security_deposit: '3000', late_fee_per_hour: '',
+  daily_rate: '', weekly_rate: '', min_days: '1', security_deposit: '', late_fee_per_hour: '',
   with_driver_available: false, driver_fee_per_day: '1500', instant_book: true, delivery_available: false, delivery_fee: '300', pet_friendly: false,
   pickup_type: 'hub', hub_id: null, pickup_address: '', city: 'Cebu City', area: '', lat: null, lng: null,
   plate_number: '', or_media_id: null, cr_media_id: null,
@@ -76,6 +77,7 @@ export function VehicleWizardSection() {
   const [id, setId] = useState<number | null>(routeId ? Number(routeId) : null)
   const [step, setStep] = useState(0)
   const [form, setForm] = useState<Form>(EMPTY)
+  const config = useQuery({ queryKey: ['auth-config'], queryFn: authService.config, staleTime: 5 * 60_000 })
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<HostVehicle['status']>('draft')
@@ -304,7 +306,7 @@ export function VehicleWizardSection() {
                   <Input label="Daily rate" type="number" inputMode="numeric" leftIcon={<span className="text-xs font-bold">₱</span>} value={form.daily_rate} onChange={(e) => { set('daily_rate', e.target.value); if (!form.late_fee_per_hour) set('late_fee_per_hour', String(Math.round(Number(e.target.value) * 0.1 / 10) * 10)) }} error={errors.daily_rate} hint={`Similar listings: ${peso(lo)}–${peso(hi)}/day`} />
                   <Input label="Weekly rate (7+ days)" type="number" leftIcon={<span className="text-xs font-bold">₱</span>} value={form.weekly_rate} onChange={(e) => set('weekly_rate', e.target.value)} optional hint={form.daily_rate ? `Renters save vs ${peso(Number(form.daily_rate) * 7)} at the daily rate` : undefined} />
                   <Input label="Minimum trip length (days)" type="number" min={1} value={form.min_days} onChange={(e) => set('min_days', e.target.value)} />
-                  <Input label="Security deposit" type="number" leftIcon={<span className="text-xs font-bold">₱</span>} value={form.security_deposit} onChange={(e) => set('security_deposit', e.target.value)} hint="Refundable. Held during the trip." />
+                  <Input label="Security deposit" type="number" leftIcon={<span className="text-xs font-bold">₱</span>} value={form.security_deposit} placeholder={String(config.data?.default_security_deposit ?? 3000)} onChange={(e) => set('security_deposit', e.target.value)} hint={`Refundable. Held during the trip. Leave it empty to use the platform default (${peso(config.data?.default_security_deposit ?? 3000)}).`} />
                   <Input label="Late return fee per hour" type="number" leftIcon={<span className="text-xs font-bold">₱</span>} value={form.late_fee_per_hour} onChange={(e) => set('late_fee_per_hour', e.target.value)} error={errors.late_fee_per_hour} hint="Charged for each hour after the grace period (excess hours)." />
                   <Input label="Grace period (minutes)" type="number" min={0} max={180} value={form.grace_minutes} onChange={(e) => set('grace_minutes', e.target.value)} hint="Free minutes after the return time before the fee starts." />
                   <Select label="Fuel policy" value={form.fuel_policy} onChange={(e) => set('fuel_policy', e.target.value as Form['fuel_policy'])} options={[{ value: 'same_level', label: 'Return with the same fuel level' }, { value: 'full_to_full', label: 'Full to full (return with a full tank)' }]} />

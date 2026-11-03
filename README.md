@@ -125,6 +125,24 @@ Tests: `cd backend && php artisan test` (72 feature tests, run on an in-memory S
 
 ---
 
+## Rental agreement, deposit and cancellation
+
+**Agreement (e-signature).** `POST /api/vehicles/{id}/agreement` fills a versioned template (`AgreementService::VERSION`, now `2026.2`) with the trip: renter's verified name, host, car and plate, dates and times (Philippine time), pick-up area, the full price breakdown, deposit, fuel policy, the listing's grace period and excess-hour rate, the cancellation rule with the exact "Free cancellation until" date, damage liability, loss/theft, fines, no sub-renting or illegal use, and accident reporting. At checkout the renter has to scroll the text to the end, tick *I agree* and type their full name, which must match the name on their verified license (same words, any order, ignoring case and accents). The server regenerates the text when the booking is made and refuses it if the hash differs from what the renter was shown, so the signed text is always the text they saw.
+
+**Signed snapshot.** `booking_agreements` keeps the rendered text, version, SHA-256 hash, typed name, time, IP address and browser of the signer. It never changes afterwards, even if prices or the template change later. Bumping `VERSION` only affects new bookings.
+
+**PDF and email.** The renter, the host and admins can download the signed PDF (`GET /api/bookings/{ref}/agreement.pdf`, `/api/host/...`, `/api/admin/...`). When a booking is confirmed, the renter and the host each get an email with the PDF attached. Locally `MAIL_MAILER=log` writes the emails to `storage/logs`; for real emails set `MAIL_MAILER=smtp` and the `MAIL_*` keys on Render. A failing mail server is logged and never undoes a paid booking.
+
+**Deposit.** Hosts set it per listing; if they leave it empty a new listing gets the platform default (admin Settings, ₱3,000 to start). It is charged as its own line with the payment and shown on the listing, at checkout and in the agreement. Status: held, then released (nothing deducted), partially released (some deducted) or applied (all deducted). It is released when the host records the return without a problem; if there is a damage report it stays on hold until an admin decides the deduction. A trip that is completed but whose deposit was somehow never settled is settled by `deposits:release-due` after the release window (default 3 days).
+
+**Cancellation.** A renter can cancel until 24 hours before pick-up (admin setting) and gets the rental and the deposit back. The platform can set a cancellation fee in whole pesos (default ₱0), kept from that refund. Inside the window the Cancel button is replaced by a clear message, with a link to support (and *Report a problem* once the trip starts). A host can cancel at any time: the renter always gets everything back, no fee, the cancellation is counted on the host (`users.host_cancellations`, shown to admins on the user page) and admins are notified. Admins can cancel at any time with or without a refund. "Free cancellation until ..." is on the listing, checkout, agreement and trip page.
+
+**Unpaid bookings.** A booking in `pending` status holds the car's dates until `expires_at` (admin setting, 30 minutes by default). `bookings:expire-pending` cancels expired ones every minute, and a lapsed hold stops blocking dates immediately, even before that job runs. Nothing creates pending bookings yet: the card/e-wallet checkout of Phase 4 will.
+
+**Scheduled jobs.** `docker/start.sh` runs `php artisan schedule:work` beside Apache: expire pending bookings (every minute), lift ended suspensions and settle old deposits (hourly). On Render's free plan the service sleeps after 15 minutes without traffic and the jobs pause. Because lapsed holds, ended suspensions and the cancellation window are all checked at request time too, nothing depends on the jobs running on time. On a paid or always-on host they simply run on schedule.
+
+---
+
 ## Database size (photos live in Postgres)
 
 Photos are compressed in the browser (max 1600 px, JPEG 82%), so one photo is about 250–400 KB, or 350–530 KB once base64-encoded in the database.

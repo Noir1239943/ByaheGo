@@ -9,6 +9,7 @@ use App\Models\Vehicle;
 use App\Models\VehicleBlockedDate;
 use App\Support\Notifier;
 use App\Support\Present;
+use App\Support\Settings;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -105,6 +106,8 @@ class HostVehicleController extends Controller
             $data['lat'] = $hub->lat;
             $data['lng'] = $hub->lng;
         }
+        // A new listing without its own deposit gets the platform default.
+        if (! $vehicle->exists && ! array_key_exists('security_deposit', $data)) $data['security_deposit'] = (int) Settings::get('default_security_deposit');
         $vehicle->fill($data)->save();
         if ($photoIds !== null) {
             $vehicle->photos()->delete();

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams, useSearchParams } from 'react-router'
-import { AlertTriangle, ArrowLeft, CalendarPlus, Car, FileText, Headset, KeyRound, MapPin, Receipt, ShieldCheck, Star, User } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CalendarPlus, Car, Download, FileText, Headset, KeyRound, MapPin, Receipt, ShieldCheck, Star, User } from 'lucide-react'
 import { toast } from 'sonner'
 import { InfoRow } from '@/components/common/InfoRow'
 import { PriceBreakdown } from '@/components/common/PriceBreakdown'
-import { RentalAgreement } from '@/components/common/RentalAgreement'
+import { AgreementView } from '@/components/common/AgreementView'
 import { ErrorState, PageLoader } from '@/components/common/States'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { tripStatus } from '@/lib/status'
@@ -18,7 +18,9 @@ import { PaymentsList } from '@/components/features/bookings/PaymentsList'
 import { TripTimeline } from '@/components/features/bookings/TripTimeline'
 import { Alert, Button, Card, CardBody, CardHeader, Modal, Select, Textarea } from '@/components/ui'
 import { getErrorMessage, getFieldErrors } from '@/lib/api'
+import { parseAgreementText } from '@/lib/agreement'
 import { downloadIcs } from '@/lib/calendar'
+import { downloadFile } from '@/lib/download'
 import { cn } from '@/lib/cn'
 import { formatDateTime, peso, timeUntil } from '@/lib/format'
 import { bookingService } from '@/services/bookings'
@@ -146,10 +148,13 @@ export function TripDetailSection() {
               b.can_cancel ? (
                 <>
                   <Button variant="danger-outline" fullWidth onClick={() => setModal('cancel')}>Cancel trip</Button>
-                  <p className="text-xs text-ink-500">Free cancellation until {formatDateTime(b.free_cancellation_until)}.</p>
+                  <p className="text-xs font-semibold text-success">Free cancellation until {formatDateTime(b.free_cancellation_until)}.</p>
                 </>
               ) : (
-                <p className="rounded-xl bg-page p-3 text-xs text-ink-700">Free cancellation ended {formatDateTime(b.free_cancellation_until)} (a day before pick-up). Need to change plans? Contact support.</p>
+                <div className="space-y-2 rounded-xl bg-page p-3 text-xs text-ink-700">
+                  <p><b>Free cancellation ended</b> on {formatDateTime(b.free_cancellation_until)}, one day before pick-up, so the Cancel button is switched off.</p>
+                  <p>You can still <Link to="/help#contact" className="font-semibold text-brand hover:underline">contact support</Link>, and once your trip starts you can report a problem here.</p>
+                </div>
               )
             )}
             {['active', 'completed'].includes(b.status) && (
@@ -166,13 +171,13 @@ export function TripDetailSection() {
         open={modal === 'cancel'}
         onClose={() => setModal(null)}
         title="Cancel this trip?"
-        description="You're cancelling more than a day before pick-up, so it's free."
+        description={b.cancellation_fee_if_cancelled > 0 ? `A cancellation fee of ${peso(b.cancellation_fee_if_cancelled)} is kept from your refund.` : "You're cancelling more than a day before pick-up, so it's free."}
         size="sm"
         footer={<><Button variant="secondary" onClick={() => setModal(null)}>Keep my trip</Button><Button variant="danger" loading={cancel.isPending} onClick={() => cancel.mutate()}>Cancel and refund</Button></>}
       >
         <div className="rounded-2xl bg-success-soft p-4 text-sm">
-          <p className="font-semibold">You'll get back {peso(b.amount_paid)}</p>
-          <p className="mt-0.5 text-ink-700">Trip total {peso(b.total)} + deposit {peso(b.security_deposit)}, refunded to {b.payment_method_label}. It usually arrives within 3–5 banking days.</p>
+          <p className="font-semibold">You'll get back {peso(b.amount_paid - b.cancellation_fee_if_cancelled)}</p>
+          <p className="mt-0.5 text-ink-700">Trip total {peso(b.total)} + deposit {peso(b.security_deposit)}{b.cancellation_fee_if_cancelled > 0 ? ` − cancellation fee ${peso(b.cancellation_fee_if_cancelled)}` : ''}, refunded to {b.payment_method_label}. It usually arrives within 3–5 banking days.</p>
         </div>
         <Textarea label="Reason (optional)" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. My plans changed" wrapperClassName="mt-4" />
       </Modal>
@@ -201,8 +206,20 @@ export function TripDetailSection() {
         </div>
       </Modal>
 
-      <Modal open={modal === 'agreement'} onClose={() => setModal(null)} title="Rental agreement" description={b.agreement.accepted_at ? `You accepted version ${b.agreement.version} on ${formatDateTime(b.agreement.accepted_at)}.` : undefined} size="lg">
-        <RentalAgreement deposit={b.security_deposit} />
+      <Modal
+        open={modal === 'agreement'}
+        onClose={() => setModal(null)}
+        title="Rental agreement"
+        description={b.agreement.has_copy ? `Signed by ${b.agreement.signer_name} on ${formatDateTime(b.agreement.accepted_at)} · version ${b.agreement.version}` : undefined}
+        size="lg"
+        footer={b.agreement.has_copy ? <Button icon={<Download className="size-4" />} onClick={() => void downloadFile(`/bookings/${b.reference}/agreement.pdf`, `ByaheGo-agreement-${b.reference}.pdf`).catch((e) => toast.error(getErrorMessage(e)))}>Download PDF</Button> : undefined}
+      >
+        {b.agreement.text ? (
+          <>
+            <AgreementView sections={parseAgreementText(b.agreement.text)} />
+            <p className="mt-4 break-all rounded-xl bg-page p-3 text-[11px] text-ink-500">Document hash (SHA-256): {b.agreement.hash}</p>
+          </>
+        ) : <p className="text-sm text-ink-500">There is no signed copy for this older booking. Contact support if you need one.</p>}
       </Modal>
     </section>
   )

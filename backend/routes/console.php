@@ -13,3 +13,15 @@ Artisan::command('accounts:lift-expired', function (\App\Services\AccountStatusS
 })->purpose('Reactivate accounts whose suspension has ended');
 
 \Illuminate\Support\Facades\Schedule::command('accounts:lift-expired')->hourly();
+
+// Unpaid pending bookings stop holding their dates, and trips whose deposit was never settled get settled.
+Artisan::command('bookings:expire-pending', function (\App\Services\BookingService $bookings) {
+    $this->info('Expired '.$bookings->expirePending().' unpaid booking(s).');
+})->purpose('Cancel pending bookings whose payment hold has run out');
+
+Artisan::command('deposits:release-due', function (\App\Services\BookingService $bookings) {
+    $this->info('Settled '.$bookings->releaseDueDeposits().' deposit(s).');
+})->purpose('Settle deposits of completed trips once the release window has passed');
+
+\Illuminate\Support\Facades\Schedule::command('bookings:expire-pending')->everyMinute();
+\Illuminate\Support\Facades\Schedule::command('deposits:release-due')->hourly();

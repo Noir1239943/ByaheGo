@@ -65,6 +65,9 @@ class AdminMiscController extends Controller
             'cancellation_cutoff_hours' => ['required', 'integer', 'between:0,168'],
             'late_fee_daily_cap' => ['required', 'numeric', 'between:1,5'],
             'deposit_release_days' => ['required', 'integer', 'between:1,14'],
+            'default_security_deposit' => ['required', 'integer', 'between:0,100000'],
+            'cancellation_fee' => ['required', 'integer', 'between:0,10000'],
+            'pending_booking_minutes' => ['required', 'integer', 'between:5,240'],
         ]);
         Settings::set($data);
         AdminAuditLog::record($request->user(), 'settings.update', null, null, $data);

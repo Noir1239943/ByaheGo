@@ -6,11 +6,15 @@ use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Incident;
 use App\Models\Vehicle;
+use App\Services\AgreementService;
 use App\Services\BookingService;
+use App\Services\PricingService;
 use App\Services\PaymentGateway;
 use App\Support\Notifier;
 use App\Support\Present;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rule;
 
 class BookingController extends Controller
@@ -62,15 +66,46 @@ class BookingController extends Controller
             'card_cvc' => ['nullable', 'string', 'max:4'],
             'card_name' => ['nullable', 'string', 'max:80'],
             'agree_terms' => ['accepted'],
+            'agreement_read_to_end' => ['accepted'],
+            'signature_name' => ['required', 'string', 'max:120'],
+            'agreement_hash' => ['required', 'string', 'size:64'],
             'confirm_age' => ['accepted_if:rental_type,self'],
         ], [
             'agree_terms.accepted' => 'Please read and accept the rental agreement to continue.',
+            'agreement_read_to_end.accepted' => 'Please scroll to the end of the rental agreement before you sign.',
+            'signature_name.required' => 'Type your full name to sign the agreement.',
             'confirm_age.accepted_if' => 'Please confirm you\'re at least 21 and have a valid license.',
             'driver_phone.required' => 'Please add a mobile number so your host can reach you.',
         ]);
         $vehicle = Vehicle::with(['hub', 'host'])->findOrFail($data['vehicle_id']);
-        $booking = $this->bookings->create($request->user()->load('latestLicense'), $vehicle, $data, $request->ip());
+        $booking = $this->bookings->create($request->user()->load('latestLicense'), $vehicle, $data, $request->ip(), $request->userAgent());
         return response()->json(Present::booking($booking->fresh()), 201);
+    }
+
+    /** The agreement filled in for this trip, shown before payment. Nothing is stored until the booking is made. */
+    public function agreementPreview(Request $request, int $id, PricingService $pricing, AgreementService $agreements)
+    {
+        $data = $request->validate([
+            'pickup_at' => ['required', 'date'],
+            'return_at' => ['required', 'date'],
+            'rental_type' => ['required', Rule::in(['self', 'driver'])],
+            'protection_plan' => ['required', Rule::in(['standard', 'plus', 'premium'])],
+        ]);
+        $vehicle = Vehicle::with(['hub', 'host'])->findOrFail($id);
+        $user = $request->user()->load('latestLicense');
+        if ($data['rental_type'] === 'self' && ! $user->isVerified()) {
+            throw ValidationException::withMessages(['verification' => 'Please verify your driver\'s license before booking a self-drive trip.']);
+        }
+        $pickup = Carbon::parse($data['pickup_at']);
+        $return = Carbon::parse($data['return_at']);
+        $quote = $pricing->quote($vehicle, $pickup, $return, $data['rental_type'], $data['protection_plan']);
+        $built = $agreements->build($vehicle, $user, $quote, $pickup, $return, $data['rental_type']);
+        return response()->json($built + ['free_cancellation_until' => $quote['free_cancellation_until']]);
+    }
+
+    public function agreementPdf(Request $request, string $reference, AgreementService $agreements)
+    {
+        return $agreements->download($this->own($request, $reference));
     }
 
     public function show(Request $request, string $reference)

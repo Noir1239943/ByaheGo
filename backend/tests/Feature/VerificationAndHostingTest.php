@@ -502,7 +502,7 @@ class VerificationAndHostingTest extends TestCase
 
         $this->as($admin)->putJson('/api/admin/settings', [
             'service_fee_rate' => 10, 'commission_rate' => 15, 'late_grace_minutes' => 60, 'cancellation_cutoff_hours' => 24,
-            'late_fee_daily_cap' => 1.5, 'deposit_release_days' => 3,
+            'late_fee_daily_cap' => 1.5, 'deposit_release_days' => 3, 'default_security_deposit' => 3000, 'cancellation_fee' => 0, 'pending_booking_minutes' => 30,
         ])->assertOk();
         $v = $this->vehicle();
         $q = $this->guest()->postJson("/api/vehicles/{$v->id}/quote", ['pickup_at' => now()->addDays(3)->toIso8601String(), 'return_at' => now()->addDays(4)->toIso8601String()]);

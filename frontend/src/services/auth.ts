@@ -11,7 +11,7 @@ export const authService = {
   exchangeSocialCode: (code: string) => api.post<AuthResponse>('/auth/social/exchange', { code }).then((r) => r.data),
   /** Finish a social sign-up where the provider gave no email. */
   completeSocial: (code: string, email: string) => api.post<AuthResponse>('/auth/social/complete', { code, email }).then((r) => r.data),
-  config: () => api.get<{ google_enabled: boolean; facebook_enabled: boolean }>('/auth/config').then((r) => r.data),
+  config: () => api.get<{ google_enabled: boolean; facebook_enabled: boolean; default_security_deposit: number }>('/auth/config').then((r) => r.data),
   forgotPassword: (email: string) => api.post<{ message: string }>('/auth/forgot-password', { email }).then((r) => r.data),
   resetPassword: (data: { token: string; email: string; password: string; password_confirmation: string }) => api.post<{ message: string }>('/auth/reset-password', data).then((r) => r.data),
   logout: () => api.post('/auth/logout'),

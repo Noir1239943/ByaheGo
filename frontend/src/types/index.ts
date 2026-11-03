@@ -22,6 +22,7 @@ export interface User extends UserBrief {
   city: string | null
   is_admin: boolean
   is_super_admin?: boolean
+  host_cancellations?: number
   is_host: boolean
   suspended_reason: string | null
   suspended_until?: string | null
@@ -111,6 +112,8 @@ export interface VehicleDetail extends VehicleCard {
   late_fee_per_hour: number
   delivery_fee: number
   min_days: number
+  grace_minutes: number
+  fuel_policy: 'same_level' | 'full_to_full'
   status: string
   pickup: { type: 'hub' | 'own'; label: string; hub: Hub | null; address: string | null; city: string | null; area: string | null; approximate: boolean }
   host: { id: number; name: string; initials: string; joined_at: string | null; trips: number; verified: boolean; vehicles: number }
@@ -170,13 +173,14 @@ export interface Quote {
   total: number
   security_deposit: number
   due_now: number
+  cancellation_fee: number
   free_cancellation_until: string
   available: boolean
 }
 
 export interface Payment {
   id: number
-  type: 'charge' | 'refund' | 'late_fee' | 'damage' | 'balance'
+  type: 'charge' | 'refund' | 'late_fee' | 'damage' | 'balance' | 'cancellation_fee'
   method: PaymentMethod | 'deposit'
   method_label: string
   amount: number
@@ -262,7 +266,9 @@ export interface Booking extends Omit<BookingRow, 'vehicle' | 'has_open_incident
   driver: { name: string; phone: string | null; email: string | null; license_no: string | null }
   payment_method: PaymentMethod
   payment_method_label: string
-  agreement: { version: string | null; accepted_at: string | null }
+  agreement: { version: string | null; accepted_at: string | null; has_copy: boolean; signer_name: string | null; hash: string | null; text: string | null }
+  cancellation_fee: number
+  cancellation_fee_if_cancelled: number
   cancelled_at: string | null
   cancelled_by: string | null
   cancel_reason: string | null
