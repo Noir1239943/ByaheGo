@@ -1,0 +1,410 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Booking;
+use App\Models\Incident;
+use App\Models\Payment;
+use App\Models\Payout;
+use App\Models\User;
+use App\Models\Vehicle;
+use App\Support\Money;
+use App\Support\Notifier;
+use App\Support\Settings;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+
+class BookingService
+{
+    public const AGREEMENT_VERSION = '2026.1';
+
+    public function __construct(protected PricingService $pricing, protected PaymentGateway $gateway) {}
+
+    public static function receiptNo(string $prefix = 'OR'): string
+    {
+        do {
+            $no = $prefix.'-'.now()->format('Y').'-'.random_int(100000, 999999);
+        } while (Payment::where('receipt_no', $no)->exists());
+        return $no;
+    }
+
+    public static function nextReference(): string
+    {
+        $n = 20400 + (int) Booking::max('id') + 1;
+        while (Booking::where('reference', 'BG-'.$n)->exists()) $n++;
+        return 'BG-'.$n;
+    }
+
+    public function create(User $renter, Vehicle $vehicle, array $data, ?string $ip = null): Booking
+    {
+        $pickup = Carbon::parse($data['pickup_at']);
+        $return = Carbon::parse($data['return_at']);
+        $rentalType = $data['rental_type'] ?? 'self';
+
+        if ($renter->isSuspended()) {
+            throw ValidationException::withMessages(['account' => 'Your account is currently on hold. Please contact support.']);
+        }
+        if ($vehicle->host_id === $renter->id) {
+            throw ValidationException::withMessages(['vehicle' => 'You can\'t book your own vehicle.']);
+        }
+        if ($vehicle->status !== 'live' || $vehicle->host?->isSuspended()) {
+            throw ValidationException::withMessages(['vehicle' => 'This vehicle isn\'t accepting bookings right now.']);
+        }
+        if ($rentalType === 'self' && ! $renter->isVerified()) {
+            throw ValidationException::withMessages(['verification' => 'Please verify your driver\'s license before booking a self-drive trip.']);
+        }
+
+        return DB::transaction(function () use ($renter, $vehicle, $data, $pickup, $return, $rentalType, $ip) {
+            // Lock the vehicle row so two renters can't grab the same dates at once.
+            $vehicle = Vehicle::whereKey($vehicle->id)->lockForUpdate()->firstOrFail();
+            $clash = $vehicle->bookings()->blocking()->where('pickup_at', '<', $return)->where('return_at', '>', $pickup)->exists();
+            if ($clash) {
+                throw ValidationException::withMessages(['pickup_at' => 'Sorry, someone just booked these dates. Please pick different dates.']);
+            }
+            $quote = $this->pricing->quote($vehicle, $pickup, $return, $rentalType, $data['protection_plan'] ?? 'standard');
+            $charge = $this->gateway->charge($data['payment_method'], $quote['due_now'], $data);
+
+            $booking = Booking::create([
+                'reference' => self::nextReference(),
+                'renter_id' => $renter->id,
+                'vehicle_id' => $vehicle->id,
+                'host_id' => $vehicle->host_id,
+                'pickup_at' => $pickup,
+                'return_at' => $return,
+                'rental_type' => $rentalType,
+                'protection_plan' => $quote['protection_plan'],
+                'days' => $quote['days'],
+                'daily_rate' => $quote['daily_rate'],
+                'rental_subtotal' => $quote['rental_subtotal'],
+                'driver_fee_total' => $quote['driver_fee_total'],
+                'protection_total' => $quote['protection_total'],
+                'service_fee' => $quote['service_fee'],
+                'total' => $quote['total'],
+                'security_deposit' => $quote['security_deposit'],
+                'amount_paid' => $quote['due_now'],
+                'status' => 'confirmed',
+                'payment_status' => 'paid',
+                'deposit_status' => 'held',
+                'pickup_label' => $vehicle->pickupLabel(),
+                'pickup_lat' => $vehicle->pickup_type === 'hub' && $vehicle->hub ? $vehicle->hub->lat : $vehicle->lat,
+                'pickup_lng' => $vehicle->pickup_type === 'hub' && $vehicle->hub ? $vehicle->hub->lng : $vehicle->lng,
+                'driver_name' => $data['driver_name'] ?? $renter->name,
+                'driver_phone' => $data['driver_phone'] ?? $renter->phone,
+                'driver_email' => $data['driver_email'] ?? $renter->email,
+                'driver_license_no' => $rentalType === 'self' ? ($renter->latestLicense?->license_number) : null,
+                'payment_method' => $data['payment_method'],
+                'agreement_accepted_at' => now(),
+                'agreement_version' => self::AGREEMENT_VERSION,
+                'agreement_ip' => $ip,
+            ]);
+
+            $booking->payments()->create([
+                'user_id' => $renter->id,
+                'type' => 'charge',
+                'method' => $data['payment_method'],
+                'amount' => $quote['due_now'],
+                'status' => $charge['status'],
+                'receipt_no' => self::receiptNo(),
+                'gateway_ref' => $charge['gateway_ref'],
+                'account_hint' => $charge['account_hint'],
+                'description' => "Trip {$booking->reference} – {$vehicle->name} (includes ".Money::peso($quote['security_deposit']).' refundable deposit)',
+            ]);
+
+            $booking->log('created', 'Booking created and rental agreement v'.self::AGREEMENT_VERSION.' accepted.', $renter->id);
+            $booking->log('payment', 'Payment of '.Money::peso($quote['due_now']).' received via '.PaymentGateway::METHODS[$data['payment_method']].'.', $renter->id);
+            $booking->log('deposit', 'Security deposit of '.Money::peso($quote['security_deposit']).' placed on hold.');
+
+            Notifier::send($renter, 'Your trip is booked!', "{$vehicle->name} · pick-up {$booking->pickup_at->format('M j, g:i A')}. Reference {$booking->reference}.", "/account/trips/{$booking->reference}", 'success');
+            Notifier::send($vehicle->host_id, 'New booking', "{$renter->name} booked your {$vehicle->name} for {$booking->days} day(s).", "/host/bookings/{$booking->reference}", 'success');
+
+            return $booking;
+        });
+    }
+
+    public function canRenterCancel(Booking $booking): bool
+    {
+        return $booking->status === 'confirmed'
+            && now()->lessThanOrEqualTo($booking->pickup_at->copy()->subHours((int) Settings::get('cancellation_cutoff_hours')));
+    }
+
+    public function cancel(Booking $booking, string $by, ?string $reason, ?User $actor = null, bool $refund = true): Booking
+    {
+        if (! in_array($booking->status, ['confirmed', 'active'], true)) {
+            throw ValidationException::withMessages(['booking' => 'This booking can no longer be cancelled.']);
+        }
+        if ($by === 'renter' && ! $this->canRenterCancel($booking)) {
+            $hours = (int) Settings::get('cancellation_cutoff_hours');
+            throw ValidationException::withMessages(['booking' => "Trips can be cancelled up to {$hours} hours (a day) before pick-up. Please contact support for help."]);
+        }
+
+        return DB::transaction(function () use ($booking, $by, $reason, $actor, $refund) {
+            $booking->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $by,
+                'cancel_reason' => $reason,
+            ]);
+            $booking->log('cancelled', 'Booking cancelled by '.$by.($reason ? ": {$reason}" : '.'), $actor?->id);
+
+            if ($refund) {
+                $refundable = $this->refundableAmount($booking);
+                if ($refundable > 0) {
+                    $this->issueRefund($booking, $refundable, 'Full refund for cancelled trip '.$booking->reference, $actor);
+                }
+                $booking->update(['deposit_status' => 'refunded', 'payment_status' => 'refunded']);
+            }
+
+            Notifier::send($booking->renter_id, 'Trip cancelled', "Your booking {$booking->reference} was cancelled.".($refund ? ' Your refund is on its way to your original payment method.' : ''), "/account/trips/{$booking->reference}", 'warning');
+            Notifier::send($booking->host_id, 'Booking cancelled', "Booking {$booking->reference} for your {$booking->vehicle->name} was cancelled.", "/host/bookings/{$booking->reference}", 'warning');
+
+            return $booking->fresh();
+        });
+    }
+
+    public function refundableAmount(Booking $booking): int
+    {
+        $paid = (int) $booking->payments()->whereIn('type', ['charge', 'balance'])->sum('amount');
+        $refunded = (int) $booking->payments()->where('type', 'refund')->sum('amount');
+        $applied = (int) $booking->payments()->whereIn('type', ['late_fee', 'damage'])->sum('amount');
+        return max(0, $paid - $refunded - $applied);
+    }
+
+    public function issueRefund(Booking $booking, int $amount, string $description, ?User $actor = null): Payment
+    {
+        $max = $this->refundableAmount($booking);
+        if ($amount <= 0 || $amount > $max) {
+            throw ValidationException::withMessages(['amount' => 'Refund must be between ₱1 and '.Money::peso($max).'.']);
+        }
+        $result = $this->gateway->refund($booking->payment_method, $amount);
+        $payment = $booking->payments()->create([
+            'user_id' => $booking->renter_id,
+            'type' => 'refund',
+            'method' => $booking->payment_method,
+            'amount' => $amount,
+            'status' => $result['status'],
+            'receipt_no' => self::receiptNo('RF'),
+            'gateway_ref' => $result['gateway_ref'],
+            'account_hint' => $booking->payments()->where('type', 'charge')->value('account_hint'),
+            'description' => $description,
+        ]);
+        $booking->log('refund', 'Refund of '.Money::peso($amount).' sent to '.(PaymentGateway::METHODS[$booking->payment_method] ?? 'original method').'.', $actor?->id);
+        if ($booking->status !== 'cancelled') {
+            $booking->update(['payment_status' => 'partially_refunded']);
+        }
+        Notifier::send($booking->renter_id, 'Refund issued', Money::peso($amount)." was refunded for {$booking->reference}. It may take 3–5 banking days to appear.", '/account/billing', 'success');
+        return $payment;
+    }
+
+    public function recordPickup(Booking $booking, array $data, User $actor): Booking
+    {
+        if ($booking->status !== 'confirmed') {
+            throw ValidationException::withMessages(['booking' => 'Only upcoming trips can be marked as picked up.']);
+        }
+        if (now()->lessThan($booking->pickup_at->copy()->subHours(12))) {
+            throw ValidationException::withMessages(['booking' => 'You can start the handover up to 12 hours before the pick-up time.']);
+        }
+        return DB::transaction(function () use ($booking, $data, $actor) {
+            $booking->inspections()->create([
+                'stage' => 'pickup',
+                'odometer' => $data['odometer'],
+                'fuel_level' => $data['fuel_level'],
+                'checklist' => $data['checklist'] ?? [],
+                'notes' => $data['notes'] ?? null,
+                'photo_ids' => $data['photo_ids'] ?? [],
+                'recorded_by' => $actor->id,
+            ]);
+            $booking->update(['status' => 'active', 'actual_pickup_at' => now()]);
+            $booking->log('pickup', "Vehicle handed over. Odometer {$data['odometer']} km, fuel {$data['fuel_level']}%.", $actor->id);
+            Notifier::send($booking->renter_id, 'Enjoy your trip!', "Your trip {$booking->reference} has started. Return by {$booking->return_at->format('M j, g:i A')} to avoid late fees.", "/account/trips/{$booking->reference}", 'success');
+            return $booking->fresh();
+        });
+    }
+
+    public function recordReturn(Booking $booking, array $data, User $actor): Booking
+    {
+        if ($booking->status !== 'active') {
+            throw ValidationException::withMessages(['booking' => 'Only trips in progress can be marked as returned.']);
+        }
+        return DB::transaction(function () use ($booking, $data, $actor) {
+            $actual = isset($data['actual_return_at']) ? Carbon::parse($data['actual_return_at']) : now();
+            if ($actual->lessThan($booking->actual_pickup_at ?? $booking->pickup_at)) {
+                throw ValidationException::withMessages(['actual_return_at' => 'Return time can\'t be before the pick-up time.']);
+            }
+            $booking->inspections()->create([
+                'stage' => 'return',
+                'odometer' => $data['odometer'],
+                'fuel_level' => $data['fuel_level'],
+                'checklist' => $data['checklist'] ?? [],
+                'notes' => $data['notes'] ?? null,
+                'photo_ids' => $data['photo_ids'] ?? [],
+                'recorded_by' => $actor->id,
+            ]);
+            $late = $this->pricing->lateFee($booking->vehicle, $booking->return_at, $actual);
+            $booking->update([
+                'status' => 'completed',
+                'actual_return_at' => $actual,
+                'late_hours' => $late['hours'],
+                'late_fee' => $late['fee'],
+            ]);
+            $booking->vehicle->increment('trips_count');
+            $booking->log('return', "Vehicle returned. Odometer {$data['odometer']} km, fuel {$data['fuel_level']}%."
+                .($late['fee'] > 0 ? " Returned {$late['hours']} hour(s) late – late fee ".Money::peso($late['fee']).'.' : ' Returned on time.'), $actor->id);
+
+            if (! empty($data['damage_reported'])) {
+                Incident::create([
+                    'booking_id' => $booking->id,
+                    'reporter_id' => $actor->id,
+                    'type' => $data['damage_type'] ?? 'damage',
+                    'description' => $data['damage_description'] ?? 'Damage found during return inspection.',
+                    'amount_claimed' => (int) ($data['damage_amount'] ?? 0),
+                    'photo_ids' => $data['photo_ids'] ?? [],
+                ]);
+                $booking->update(['deposit_status' => 'on_hold']);
+                $booking->log('incident', 'Host reported an issue at return. Deposit stays on hold while our team reviews it.', $actor->id);
+                Notifier::send($booking->renter_id, 'Your deposit is on hold', "Your host reported an issue after trip {$booking->reference}. Our team will review it within 48 hours.", "/account/trips/{$booking->reference}", 'warning');
+                Notifier::admins('New damage claim', "Booking {$booking->reference} has a damage report to review.", '/admin/disputes', 'warning');
+            } else {
+                $this->settle($booking->fresh());
+            }
+            Notifier::send($booking->renter_id, 'Thanks for riding with ByaheGo', "Trip {$booking->reference} is complete. Leave a review to help other renters!", "/account/trips/{$booking->reference}", 'info');
+            return $booking->fresh();
+        });
+    }
+
+    /**
+     * Settle the deposit after a trip: late fees and approved damages are deducted first, the rest goes back
+     * to the renter. Anything above the deposit becomes a balance the renter pays from their trip page.
+     */
+    public function settle(Booking $booking, int $damage = 0, ?User $actor = null): Booking
+    {
+        $deposit = $booking->security_deposit;
+        $charges = [];
+        if ($booking->late_fee > 0) $charges['late_fee'] = $booking->late_fee;
+        if ($damage > 0) $charges['damage'] = $damage;
+
+        $remainingDeposit = $deposit;
+        $balance = 0;
+        foreach ($charges as $type => $amount) {
+            $fromDeposit = min($amount, $remainingDeposit);
+            $remainingDeposit -= $fromDeposit;
+            $balance += $amount - $fromDeposit;
+            if ($fromDeposit > 0) {
+                $booking->payments()->create([
+                    'user_id' => $booking->renter_id,
+                    'type' => $type,
+                    'method' => 'deposit',
+                    'amount' => $fromDeposit,
+                    'status' => 'succeeded',
+                    'receipt_no' => self::receiptNo(),
+                    'description' => ($type === 'late_fee' ? "Late return fee ({$booking->late_hours} h)" : 'Approved damage charge')." – deducted from deposit for {$booking->reference}",
+                ]);
+            }
+        }
+        if ($remainingDeposit > 0) {
+            $result = $this->gateway->refund($booking->payment_method, $remainingDeposit);
+            $booking->payments()->create([
+                'user_id' => $booking->renter_id,
+                'type' => 'refund',
+                'method' => $booking->payment_method,
+                'amount' => $remainingDeposit,
+                'status' => $result['status'],
+                'receipt_no' => self::receiptNo('RF'),
+                'gateway_ref' => $result['gateway_ref'],
+                'account_hint' => $booking->payments()->where('type', 'charge')->value('account_hint'),
+                'description' => "Security deposit returned for {$booking->reference}",
+            ]);
+        }
+
+        $commission = (int) round(($booking->rental_subtotal + $booking->driver_fee_total) * Settings::get('commission_rate') / 100);
+        $hostEarnings = $booking->rental_subtotal + $booking->driver_fee_total - $commission + $booking->late_fee + $damage;
+        $depositStatus = $remainingDeposit === $deposit ? 'released' : ($remainingDeposit > 0 ? 'partially_released' : 'applied');
+
+        $booking->update([
+            'damage_charge' => $damage,
+            'deposit_refunded' => $remainingDeposit,
+            'balance_due' => $balance,
+            'deposit_status' => $depositStatus,
+            'payment_status' => $balance > 0 ? 'balance_due' : 'paid',
+            'commission' => $commission,
+            'host_earnings' => $hostEarnings,
+            'settled_at' => now(),
+        ]);
+
+        Payout::updateOrCreate(['booking_id' => $booking->id], [
+            'host_id' => $booking->host_id,
+            'amount' => $hostEarnings,
+            'status' => 'scheduled',
+            'scheduled_for' => now()->addDays(3)->toDateString(),
+        ]);
+
+        $msg = $remainingDeposit > 0 ? Money::peso($remainingDeposit).' of your deposit is on its way back to you.' : 'Your deposit was used to cover trip charges.';
+        if ($balance > 0) $msg .= ' A remaining balance of '.Money::peso($balance).' is due.';
+        $booking->log('settled', 'Deposit settled. '.$msg, $actor?->id);
+        Notifier::send($booking->renter_id, 'Deposit update', $msg, "/account/trips/{$booking->reference}", $balance > 0 ? 'warning' : 'success');
+
+        return $booking->fresh();
+    }
+
+    public function payBalance(Booking $booking, array $data): Booking
+    {
+        if ($booking->balance_due <= 0) {
+            throw ValidationException::withMessages(['booking' => 'There is no balance due on this trip.']);
+        }
+        $charge = $this->gateway->charge($data['payment_method'], $booking->balance_due, $data);
+        $booking->payments()->create([
+            'user_id' => $booking->renter_id,
+            'type' => 'balance',
+            'method' => $data['payment_method'],
+            'amount' => $booking->balance_due,
+            'status' => $charge['status'],
+            'receipt_no' => self::receiptNo(),
+            'gateway_ref' => $charge['gateway_ref'],
+            'account_hint' => $charge['account_hint'],
+            'description' => "Remaining balance for {$booking->reference}",
+        ]);
+        $booking->log('payment', 'Remaining balance of '.Money::peso($booking->balance_due).' paid.', $booking->renter_id);
+        $booking->update(['balance_due' => 0, 'payment_status' => 'paid']);
+        return $booking->fresh();
+    }
+
+    public function resolveIncident(Incident $incident, string $action, int $amount, ?string $notes, bool $suspendRenter, User $admin): Incident
+    {
+        if ($incident->status !== 'open') {
+            throw ValidationException::withMessages(['incident' => 'This case has already been closed.']);
+        }
+        return DB::transaction(function () use ($incident, $action, $amount, $notes, $suspendRenter, $admin) {
+            $booking = $incident->booking;
+            $incident->update([
+                'status' => $action === 'charge' ? 'resolved' : 'dismissed',
+                'amount_approved' => $action === 'charge' ? $amount : 0,
+                'resolution_notes' => $notes,
+                'resolved_by' => $admin->id,
+                'resolved_at' => now(),
+            ]);
+            $booking->log('incident', $action === 'charge'
+                ? 'Claim approved: renter charged '.Money::peso($amount).'.'
+                : 'Claim dismissed by our team.', $admin->id);
+
+            if ($booking->status === 'completed' && $booking->settled_at === null) {
+                $openLeft = $booking->incidents()->where('status', 'open')->exists();
+                if (! $openLeft) {
+                    $totalApproved = (int) $booking->incidents()->where('status', 'resolved')->sum('amount_approved');
+                    $this->settle($booking->fresh(), $totalApproved, $admin);
+                }
+            } elseif ($action === 'charge' && $amount > 0 && $booking->settled_at !== null) {
+                // Trip was already settled: add the charge as a balance to pay.
+                $booking->update(['balance_due' => $booking->balance_due + $amount, 'payment_status' => 'balance_due', 'damage_charge' => $booking->damage_charge + $amount]);
+                Notifier::send($booking->renter_id, 'Balance due', 'A charge of '.Money::peso($amount)." was added to {$booking->reference} after review.", "/account/trips/{$booking->reference}", 'warning');
+            }
+
+            if ($suspendRenter) {
+                $renter = $booking->renter;
+                $renter->update(['status' => 'suspended', 'suspended_at' => now(), 'suspended_reason' => 'Account on hold after incident on '.$booking->reference]);
+                $renter->tokens()->delete();
+            }
+            Notifier::send($incident->reporter_id, 'Your report was reviewed', $action === 'charge' ? 'We approved the claim of '.Money::peso($amount).'.' : 'We reviewed your report and closed it.', null, 'info');
+            return $incident->fresh();
+        });
+    }
+}

@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-brand: #0D7C6B;
+  --color-brand-dark: #0A5C50;
+  --color-brand-soft: #DDF1EF;
+  --color-brand-tint: #F0FBF7;
+  --color-accent: #FFB224;
+  --color-accent-dark: #E59A0C;
+  --color-accent-soft: #FFF3DB;
+  --color-ink-900: #0E1F29;
+  --color-ink-700: #2B3B48;
+  --color-ink-500: #596B77;
+  --color-ink-400: #8B99A6;
+  --color-line-200: #E4E9ED;
+  --color-line-100: #EEF2F5;
+  --color-page: #F7F8FA;
+  --color-success: #1F9D54;
+  --color-success-soft: #E3F4EA;
+  --color-danger: #D64545;
+  --color-danger-soft: #FDECEC;
+  --color-warning: #B7791F;
+  --color-warning-soft: #FFF3DB;
+  --color-info: #2F6FB2;
+  --color-info-soft: #E6F0FA;
+  --color-hero: #0B2F2D;
+  --color-hero-2: #0F3B38;
+
+  --shadow-card: 0 1px 2px rgb(14 31 41 / 0.04), 0 4px 16px rgb(14 31 41 / 0.05);
+  --shadow-pop: 0 10px 40px rgb(14 31 41 / 0.14);
+  --animate-fade-in: fade-in 0.18s ease-out;
+  --animate-slide-up: slide-up 0.22s ease-out;
+  --animate-slide-in: slide-in 0.22s ease-out;
+
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes slide-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes slide-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+}
+
+@layer base {
+  html { -webkit-tap-highlight-color: transparent; }
+  body {
+    @apply bg-page font-sans text-ink-900 antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection { @apply bg-brand-soft text-brand-dark; }
+  :focus-visible { @apply outline-2 outline-offset-2 outline-brand; }
+  input[type='number']::-webkit-inner-spin-button { opacity: 0.4; }
+}
+
+@utility container-page {
+  @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+
+/* Leaflet tweaks */
+.leaflet-container { font-family: var(--font-sans); border-radius: inherit; z-index: 0; }
+.leaflet-popup-content-wrapper { border-radius: 14px; box-shadow: var(--shadow-pop); }
+.leaflet-popup-content { margin: 12px 14px; }
+.byahego-pin { background: transparent; border: 0; }
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff; }
+  @page { margin: 14mm; }
+}

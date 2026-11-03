@@ -1,0 +1,26 @@
+# Root ignore file – each app also has its own .gitignore
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+vendor/
+node_modules/
+dist/
+dist-ssr/
+build/
+backend/public/build/
+backend/storage/*.key
+
+# Local databases and caches
+*.sqlite
+*.sqlite3
+*.log
+.phpunit.result.cache
+.phpunit.cache/

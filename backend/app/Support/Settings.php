@@ -1,0 +1,61 @@
+<?php
+
+namespace App\Support;
+
+use App\Models\Setting;
+use Illuminate\Support\Facades\Schema;
+
+class Settings
+{
+    public const DEFAULTS = [
+        'service_fee_rate' => 7.5,        // % of rental + driver fees, charged to renter
+        'commission_rate' => 15,          // % of rental + driver fees kept by the platform
+        'late_grace_minutes' => 60,       // minutes after return time before late fees start
+        'cancellation_cutoff_hours' => 24, // free cancellation until this many hours before pick-up
+        'late_fee_daily_cap' => 1.5,      // late fees are capped at this multiple of the daily rate per 24h late
+        'deposit_release_days' => 3,
+    ];
+
+    public const LABELS = [
+        'service_fee_rate' => 'Service fee (%)',
+        'commission_rate' => 'Platform commission (%)',
+        'late_grace_minutes' => 'Late return grace period (minutes)',
+        'cancellation_cutoff_hours' => 'Free cancellation cut-off (hours before pick-up)',
+        'late_fee_daily_cap' => 'Late fee cap (× daily rate per day late)',
+        'deposit_release_days' => 'Deposit release window (days)',
+    ];
+
+    protected static ?array $cache = null;
+
+    public static function all(): array
+    {
+        if (static::$cache === null) {
+            $stored = Schema::hasTable('settings') ? Setting::pluck('value', 'key')->all() : [];
+            static::$cache = [];
+            foreach (static::DEFAULTS as $k => $v) {
+                static::$cache[$k] = isset($stored[$k]) ? (float) $stored[$k] : (float) $v;
+            }
+        }
+        return static::$cache;
+    }
+
+    public static function get(string $key): float
+    {
+        return static::all()[$key] ?? (float) (static::DEFAULTS[$key] ?? 0);
+    }
+
+    public static function set(array $values): void
+    {
+        foreach ($values as $k => $v) {
+            if (array_key_exists($k, static::DEFAULTS)) {
+                Setting::updateOrCreate(['key' => $k], ['value' => (string) $v]);
+            }
+        }
+        static::$cache = null;
+    }
+
+    public static function flush(): void
+    {
+        static::$cache = null;
+    }
+}
