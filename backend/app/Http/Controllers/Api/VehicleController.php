@@ -181,7 +181,7 @@ class VehicleController extends Controller
         $result = $this->shared($request) ? PublicCache::remember('search', $request->query(), 30, fn () => $this->search($request)) : $this->search($request);
         if ($u = Auth::guard('sanctum')->user()) {
             $favIds = Favorite::where('user_id', $u->id)->pluck('vehicle_id')->all();
-            $result['data'] = $result['data']->map(fn ($card) => ['is_favorite' => in_array($card['id'], $favIds, true)] + $card)->values();
+            $result['data'] = collect($result['data'])->map(fn ($card) => ['is_favorite' => in_array($card['id'], $favIds, true)] + $card)->values()->all();
         }
         return response()->json($result);
     }

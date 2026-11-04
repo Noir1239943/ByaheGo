@@ -163,7 +163,7 @@ export function VehicleDetailSection() {
           <ReviewsBlock v={v} />
         </div>
 
-        <aside className="lg:sticky lg:top-24 lg:self-start">
+        <aside id="booking" className="scroll-mt-20 lg:sticky lg:top-24 lg:self-start">
           <BookingWidget vehicle={v} />
           <p className="mt-3 rounded-2xl bg-accent-soft p-4 text-xs text-ink-700">
             A refundable {peso(v.security_deposit)} security deposit is held with your payment and released within {v.policies.deposit_release_days} days of return.
@@ -177,6 +177,14 @@ export function VehicleDetailSection() {
           <span className="text-sm text-ink-500">/day</span>
         </p>
         <Button onClick={() => document.getElementById('book')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>Check availability</Button>
+      </div>
+      {/* Phones: the price and the Book button stay in reach while the page scrolls. */}
+      <div className="no-print fixed inset-x-0 bottom-0 z-[800] flex items-center justify-between gap-3 border-t border-line-200 bg-white px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-pop lg:hidden">
+        <div>
+          <p className="text-lg leading-tight font-extrabold">{peso(v.daily_rate)}<span className="text-sm font-medium text-ink-500"> / day</span></p>
+          <p className="text-xs text-ink-500">Choose dates to see the total</p>
+        </div>
+        <Button size="lg" onClick={() => document.getElementById('booking')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Book</Button>
       </div>
     </section>
   )

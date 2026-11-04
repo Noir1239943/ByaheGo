@@ -28,6 +28,8 @@ class PublicCache
     public static function remember(string $name, array $params, int $seconds, Closure $build): mixed
     {
         ksort($params);
-        return Cache::remember('public.'.$name.'.'.self::version().'.'.md5(json_encode($params)), $seconds, $build);
+        // Stored as plain arrays (exactly what the JSON would be). Cached objects such as Collections or models do not
+        // survive a file or database cache, which refuses to rebuild classes, and come back as broken placeholders.
+        return Cache::remember('public.'.$name.'.'.self::version().'.'.md5(json_encode($params)), $seconds, fn () => json_decode(json_encode($build()), true));
     }
 }

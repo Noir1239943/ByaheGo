@@ -28,7 +28,7 @@ export function PoliciesBlock({ v }: { v: VehicleDetail }) {
           </div>
         ))}
       </div>
-      <Link to="/terms" className="mt-4 inline-block text-sm font-semibold text-brand hover:underline">Read the full rental agreement →</Link>
+      <Link to="/terms" className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-brand hover:underline">Read the full rental agreement →</Link>
     </div>
   )
 }

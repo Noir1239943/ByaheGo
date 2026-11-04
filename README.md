@@ -103,7 +103,7 @@ cp .env.example .env                    # VITE_API_URL=http://localhost:8000
 npm run dev                             # http://localhost:5173
 ```
 
-Tests: `cd backend && php artisan test` (148 feature tests, run on an in-memory SQLite database so they never touch Neon, with Xendit faked: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, the rental agreement, Xendit checkout, webhooks, refunds and invoices, 24-hour cancellation rule, guided check-in/out photos, excess hours, extensions, the "car not returned" report, the evidence packet, damage/theft disputes, suspensions, settings).
+Tests: `cd backend && php artisan test` (149 feature tests, run on an in-memory SQLite database so they never touch Neon, with Xendit faked: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, the rental agreement, Xendit checkout, webhooks, refunds and invoices, 24-hour cancellation rule, guided check-in/out photos, excess hours, extensions, the "car not returned" report, the evidence packet, damage/theft disputes, suspensions, settings).
 
 ---
 
@@ -221,6 +221,12 @@ Neon is in Singapore, so every database query from a laptop in Cebu is a network
 | **Token bookkeeping** | The "last used" time of a sign-in is written at most every 5 minutes instead of on every request. |
 
 **Requests one at a time.** PHP's built-in server (`php artisan serve`) answers one request at a time on Windows, so a page that asks for five things waits for them in turn. `node dev-parallel.mjs` (in `backend`) starts four PHP workers and shares requests between them on the same port 8000; use it instead of `php artisan serve` when developing. Production (Apache on Render) is already parallel.
+
+---
+
+## Install as an app (PWA)
+
+ByaheGo is installable. On Android and desktop Chrome an **Install** banner appears; on iPhone Safari the banner explains **Share → Add to Home Screen**. The service worker keeps the app shell and map tiles so the site opens offline (with an "offline" notice); it never stores API answers, documents or trip photos. When a new version is deployed a **Refresh** prompt appears. On phones every button and tab is at least 44 px tall, and the car page has a sticky price-and-**Book** bar.
 
 ---
 

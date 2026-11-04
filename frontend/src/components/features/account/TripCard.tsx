@@ -21,7 +21,7 @@ export function TripCard({ b, base = '/account/trips' }: { b: BookingRow; base?:
           <span className="text-xs text-ink-400">{b.reference}</span>
           {b.balance_due > 0 && <span className="inline-flex items-center gap-1 text-xs font-semibold text-danger"><AlertTriangle className="size-3.5" /> {peso(b.balance_due)} due</span>}
         </div>
-        <Link to={`${base}/${b.reference}`} className="mt-1 block truncate text-lg font-bold hover:text-brand">{v?.name}</Link>
+        <Link to={`${base}/${b.reference}`} className="mt-1 block truncate py-2 text-lg font-bold hover:text-brand">{v?.name}</Link>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-500">
           <span className="flex items-center gap-1"><CalendarDays className="size-4" /> {formatDateTime(b.pickup_at)} → {formatDateTime(b.return_at)}</span>
           <span className="flex items-center gap-1"><MapPin className="size-4" /> {b.pickup_label}</span>

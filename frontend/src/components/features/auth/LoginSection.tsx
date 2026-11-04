@@ -76,7 +76,7 @@ export function LoginSection() {
           }
         />
         <div className="-mt-1 text-right">
-          <Link to="/forgot-password" className="text-sm font-semibold text-brand hover:underline">Forgot password?</Link>
+          <Link to="/forgot-password" className="inline-flex min-h-11 items-center text-sm font-semibold text-brand hover:underline">Forgot password?</Link>
         </div>
         <Button type="submit" fullWidth size="lg" loading={busy}>Log in</Button>
       </form>

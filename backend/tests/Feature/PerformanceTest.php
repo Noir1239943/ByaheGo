@@ -96,6 +96,32 @@ class PerformanceTest extends TestCase
         $this->assertSame(1, $this->guest()->getJson('/api/stats')->json('vehicles'));
     }
 
+    /** The tests use an in-memory cache, but Render uses files, which refuse to rebuild objects: the cached search must be plain data. */
+    public function test_cached_pages_survive_a_real_file_cache(): void
+    {
+        $dir = storage_path('framework/testing/perf-cache');
+        config(['cache.default' => 'file', 'cache.stores.file.path' => $dir]);
+        app('cache')->purge();
+        $v = $this->vehicle();
+        try {
+            $cold = $this->guest()->getJson('/api/vehicles')->assertOk();
+            $warm = $this->guest()->getJson('/api/vehicles')->assertOk();
+            $this->assertSame($cold->json('data'), $warm->json('data'));
+            $this->assertIsList($warm->json('data'));
+            $this->assertSame($v->id, $warm->json('data.0.id'));
+            $this->assertIsList($this->guest()->getJson('/api/vehicles/map')->assertOk()->json('data'));
+            $this->assertIsList($this->guest()->getJson('/api/vehicles/map')->json('data'));
+            $this->guest()->getJson("/api/vehicles/{$v->id}")->assertOk();
+            $this->guest()->getJson("/api/vehicles/{$v->id}")->assertOk()->assertJsonPath('id', $v->id)->assertJsonCount(0, 'photos');
+            $this->assertIsList($this->guest()->getJson('/api/hubs')->json('data'));
+            $this->assertIsList($this->guest()->getJson('/api/hubs')->json('data'));
+            $this->assertSame(1, $this->guest()->getJson('/api/stats')->json('vehicles'));
+            $this->assertSame(1, $this->guest()->getJson('/api/stats')->json('vehicles'));
+        } finally {
+            \Illuminate\Support\Facades\File::deleteDirectory($dir);
+        }
+    }
+
     public function test_the_cached_search_still_shows_each_persons_own_favorites(): void
     {
         $v = $this->vehicle();

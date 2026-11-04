@@ -58,7 +58,7 @@ export function BillingSection() {
           columns={[
             { key: 'date', header: 'Date', cell: (p) => <span className="whitespace-nowrap text-ink-500">{formatDate(p.created_at)}</span> },
             { key: 'desc', header: 'Description', cell: (p) => <><p className="font-semibold">{PAYMENT_TYPE_LABEL[p.type]}</p><p className="max-w-xs truncate text-xs text-ink-500">{p.vehicle_name ?? p.description}</p>{p.status === 'failed' && p.type !== 'refund' && p.failure_reason && <p className="max-w-xs text-xs text-danger">{p.failure_reason}</p>}</> },
-            { key: 'trip', header: 'Trip', cell: (p) => p.booking_reference && <Link to={`/account/trips/${p.booking_reference}`} className="font-medium text-brand hover:underline">{p.booking_reference}</Link> },
+            { key: 'trip', header: 'Trip', cell: (p) => p.booking_reference && <Link to={`/account/trips/${p.booking_reference}`} className="inline-flex min-h-11 items-center font-medium text-brand hover:underline">{p.booking_reference}</Link> },
             { key: 'method', header: 'Method', cell: (p) => <span className="text-ink-700">{p.method_label}</span> },
             { key: 'status', header: 'Status', cell: (p) => p.method === 'deposit' ? <span className="inline-flex items-center gap-1 text-xs text-ink-500"><Clock className="size-3" /> From deposit</span> : <PaymentStatusBadge p={p} /> },
             { key: 'amount', header: 'Amount', headerClassName: 'text-right', className: 'text-right', cell: (p) => <span className={p.type === 'refund' ? 'font-bold text-success' : 'font-bold'}>{p.type === 'refund' ? '+' : ''}{peso(p.amount)}</span> },

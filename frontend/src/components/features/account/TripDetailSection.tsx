@@ -160,7 +160,7 @@ export function TripDetailSection() {
             <CardBody className="grid gap-5 sm:grid-cols-2">
               <InfoRow icon={<CalendarPlus />} label="Pick-up" value={formatDateTime(b.pickup_at)} />
               <InfoRow icon={<CalendarPlus />} label="Return" value={formatDateTime(b.return_at)} />
-              <InfoRow icon={<MapPin />} label="Pick-up location" value={<>{b.pickup_label}{b.pickup_lat && <a className="ml-1 text-xs font-semibold text-brand" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/search/?api=1&query=${b.pickup_lat},${b.pickup_lng}`}>Directions</a>}</>} />
+              <InfoRow icon={<MapPin />} label="Pick-up location" value={<>{b.pickup_label}{b.pickup_lat && <a className="ml-1 inline-flex min-h-11 items-center text-xs font-semibold text-brand" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/search/?api=1&query=${b.pickup_lat},${b.pickup_lng}`}>Directions</a>}</>} />
               <InfoRow icon={<User />} label={b.rental_type === 'driver' ? 'Contact person' : 'Driver'} value={<>{b.driver.name}<span className="block text-xs font-normal text-ink-500">{b.driver.phone}</span></>} />
               <InfoRow icon={<ShieldCheck />} label="Protection" value={<>{b.protection.name}<span className="block text-xs font-normal text-ink-500">You pay at most {peso(b.protection.liability_cap)} for accidental damage</span></>} />
               <InfoRow icon={<KeyRound />} label="Host" value={b.host?.name} />

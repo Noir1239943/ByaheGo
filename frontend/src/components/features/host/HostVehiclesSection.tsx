@@ -48,12 +48,12 @@ export function HostVehiclesSection() {
   return (
     <section>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <Tabs variant="pill" value={tab} onChange={setTab} tabs={[
+        <div className="max-w-full overflow-x-auto"><Tabs variant="pill" value={tab} onChange={setTab} tabs={[
           { value: 'all', label: 'All', count: total }, { value: 'live', label: 'Live', count: c.live ?? 0 }, { value: 'pending', label: 'In review', count: c.pending ?? 0 },
           { value: 'draft', label: 'Drafts', count: c.draft ?? 0 }, { value: 'paused', label: 'Paused', count: c.paused ?? 0 }, { value: 'rejected', label: 'Needs changes', count: c.rejected ?? 0 },
-        ]} />
-        <div className="flex items-center gap-2">
-          <Input placeholder="Search vehicles" leftIcon={<Search />} value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-56" aria-label="Search vehicles" />
+        ]} /></div>
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <Input placeholder="Search vehicles" leftIcon={<Search />} value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-full sm:w-56" aria-label="Search vehicles" />
           <Button size="sm" to="/host/vehicles/new" icon={<Plus className="size-4" />}>Add vehicle</Button>
         </div>
       </div>

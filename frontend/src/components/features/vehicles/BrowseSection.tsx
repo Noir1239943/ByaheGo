@@ -75,7 +75,7 @@ export function BrowseSection() {
                 )}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button variant="secondary" size="sm" className="lg:hidden" icon={<SlidersHorizontal className="size-4" />} onClick={() => setFiltersOpen(true)}>
                 Filters{activeCount > 0 && ` (${activeCount})`}
               </Button>

@@ -15,7 +15,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt', // a new version waits until the person taps "Refresh" (see PwaStatus)
       includeAssets: ['icons/favicon-32.png', 'icons/apple-touch-icon.png'],
       manifest: {
         name: 'ByaheGo – Car Rental in Cebu',
@@ -35,19 +35,15 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // The app shell opens offline; the API is never routed to it and never cached.
         navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//],
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
         globIgnores: ['models/**', 'tesseract/**'], // big face / OCR files are fetched on demand, not precached
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         runtimeCaching: [
-          {
-            // Only pictures shown through <img> tags, which carry no sign-in: these are the public vehicle photos. Private files
-            // (licenses, trip photos) are loaded with the sign-in token, are never put in this shared cache, and are kept by the
-            // browser's own HTTP cache for the signed-in user only.
-            urlPattern: ({ url, request }) => request.destination === 'image' && url.pathname.startsWith('/api/media/'),
-            handler: 'CacheFirst',
-            options: { cacheName: 'vehicle-photos', expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 14 } },
-          },
+          // No rule for /api/*: API answers, documents and photos are never stored by the service worker (they are
+          // personal, and the browser's own HTTP cache already keeps public photos). Only map tiles, which are public:
           {
             urlPattern: ({ url }) => url.hostname.endsWith('tile.openstreetmap.org'),
             handler: 'StaleWhileRevalidate',
