@@ -19,12 +19,12 @@ class HostVehicleController extends Controller
 {
     protected function own(Request $request, int $id): Vehicle
     {
-        return Vehicle::with(['hub', 'photos', 'host'])->where('host_id', $request->user()->id)->findOrFail($id);
+        return Vehicle::withListStats()->where('host_id', $request->user()->id)->findOrFail($id);
     }
 
     public function index(Request $request)
     {
-        $q = Vehicle::with(['hub', 'photos', 'host'])->where('host_id', $request->user()->id)->latest();
+        $q = Vehicle::withListStats()->where('host_id', $request->user()->id)->latest();
         if ($status = $request->input('status')) $q->where('status', $status);
         if ($term = $request->input('q')) {
             $like = '%'.mb_strtolower($term).'%';

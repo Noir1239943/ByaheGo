@@ -42,6 +42,13 @@ class Booking extends Model
     public function agreement(): HasOne { return $this->hasOne(BookingAgreement::class); }
 
     /** Bookings that block a vehicle's calendar: confirmed or active ones, and unpaid pending ones until their hold runs out. */
+    /** Adds "has an open incident" and "has a review" as columns, so a list of rows needs no extra queries for them. */
+    public function scopeWithRowFlags(Builder $q): Builder
+    {
+        return $q->addSelect(['bookings.*', \Illuminate\Support\Facades\DB::raw("exists (select 1 from incidents where incidents.booking_id = bookings.id and incidents.status = 'open') as has_open_incident"),
+            \Illuminate\Support\Facades\DB::raw('exists (select 1 from reviews where reviews.booking_id = bookings.id) as has_review')]);
+    }
+
     public function scopeBlocking(Builder $q): Builder
     {
         return $q->where(fn ($w) => $w->whereIn('status', ['confirmed', 'active'])

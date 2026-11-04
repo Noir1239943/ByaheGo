@@ -2,11 +2,12 @@ import { useQuery } from '@tanstack/react-query'
 import { BadgeCheck, Check, Star, Zap } from 'lucide-react'
 import { SearchForm } from '@/components/common/SearchBar'
 import { VehicleArt } from '@/components/common/VehicleArt'
+import { STALE } from '@/lib/constants'
 import { peso } from '@/lib/format'
 import { vehicleService } from '@/services/vehicles'
 
 export function HeroSection() {
-  const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: vehicleService.stats, staleTime: 300000 })
+  const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: vehicleService.stats, staleTime: STALE.static })
   return (
     <section className="relative overflow-hidden bg-hero text-white">
       <div className="pointer-events-none absolute -right-20 bottom-0 size-[420px] rounded-full bg-accent/25 blur-3xl" />

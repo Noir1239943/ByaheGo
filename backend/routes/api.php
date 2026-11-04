@@ -123,6 +123,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     // ----- Admin -----
     Route::prefix('admin')->middleware('role:admin')->group(function () {
         Route::get('overview', AdminOverviewController::class);
+        Route::get('attention', [AdminOverviewController::class, 'attention']);
         Route::get('users', [AdminUserController::class, 'index']);
         Route::get('users/{id}', [AdminUserController::class, 'show'])->whereNumber('id');
         Route::post('users/{id}/suspend', [AdminUserController::class, 'suspend'])->whereNumber('id');

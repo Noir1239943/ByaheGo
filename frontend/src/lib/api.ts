@@ -66,8 +66,9 @@ export function getFieldErrors(error: unknown): Record<string, string> {
   return {}
 }
 
-export function mediaUrl(id: number | null | undefined) {
-  return id ? `${API_URL}/api/media/${id}` : null
+/** `width` asks for a smaller copy, so thumbnails and grids don't download full-size originals. */
+export function mediaUrl(id: number | null | undefined, width?: number) {
+  return id ? `${API_URL}/api/media/${id}${width ? `?w=${width}` : ''}` : null
 }
 
 /** If a request failed because the account is suspended or revoked, the details to show (reason, end date, how to appeal). */

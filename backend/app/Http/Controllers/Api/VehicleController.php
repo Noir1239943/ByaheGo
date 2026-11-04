@@ -11,6 +11,7 @@ use App\Models\Vehicle;
 use App\Models\VehicleBlockedDate;
 use App\Services\PricingService;
 use App\Support\Present;
+use App\Support\PublicCache;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -67,6 +68,15 @@ class VehicleController extends Controller
         if ($request->input('sort') === 'nearest' && ! $request->filled('lat')) {
             throw ValidationException::withMessages(['lat' => 'Share your location or choose an area to sort by distance.']);
         }
+    }
+
+    /**
+     * Plain browsing (filters, sort, page) is the same for everyone and worth keeping for a moment. A typed search, a place or
+     * a date range is one person's question, so it is always answered fresh (and the cache can't be filled with one-off keys).
+     */
+    protected function shared(Request $request): bool
+    {
+        return ! $request->hasAny(['q', 'location', 'lat', 'lng', 'radius', 'pickup_at', 'return_at']);
     }
 
     protected function dates(Request $request): array
@@ -166,6 +176,18 @@ class VehicleController extends Controller
     public function index(Request $request)
     {
         $this->validateSearch($request);
+        // The same search is shown to everyone, so it is kept for a short while (and dropped the moment a car, booking
+        // or review changes). Only the little heart on each card is per person, and that is added after.
+        $result = $this->shared($request) ? PublicCache::remember('search', $request->query(), 30, fn () => $this->search($request)) : $this->search($request);
+        if ($u = Auth::guard('sanctum')->user()) {
+            $favIds = Favorite::where('user_id', $u->id)->pluck('vehicle_id')->all();
+            $result['data'] = $result['data']->map(fn ($card) => ['is_favorite' => in_array($card['id'], $favIds, true)] + $card)->values();
+        }
+        return response()->json($result);
+    }
+
+    protected function search(Request $request): array
+    {
         $q = $this->filtered($request);
         $lat = $request->filled('lat') ? (float) $request->input('lat') : null;
         $lng = $request->filled('lng') ? (float) $request->input('lng') : null;
@@ -183,20 +205,20 @@ class VehicleController extends Controller
         }
 
         $page = $q->paginate($request->integer('per_page', self::PER_PAGE) ?: self::PER_PAGE);
-        $favIds = ($u = Auth::guard('sanctum')->user()) ? Favorite::where('user_id', $u->id)->pluck('vehicle_id')->all() : [];
 
-        $result = Present::paginated($page, function (Vehicle $v) use ($lat, $lng, $favIds) {
-            $card = Present::vehicleCard($v, ['is_favorite' => in_array($v->id, $favIds, true)]);
+        $result = Present::paginated($page, function (Vehicle $v) use ($lat, $lng) {
+            $card = Present::vehicleCard($v, ['is_favorite' => false]);
             if ($lat !== null && $lng !== null) $card['distance_km'] = $this->distanceKm($lat, $lng, $card['lat'], $card['lng']);
             return $card;
         });
 
         // Facet counts for the vehicle-type filter (all other filters applied).
+        $range = Vehicle::live()->selectRaw('MIN(daily_rate) as lo, MAX(daily_rate) as hi')->first();
         $result['facets'] = [
             'types' => $this->filtered($request, false)->reorder()->selectRaw('vehicles.type, COUNT(*) as total')->groupBy('vehicles.type')->pluck('total', 'type'),
-            'price_range' => ['min' => (int) Vehicle::live()->min('daily_rate'), 'max' => (int) Vehicle::live()->max('daily_rate')],
+            'price_range' => ['min' => (int) $range->lo, 'max' => (int) $range->hi],
         ];
-        return response()->json($result);
+        return $result;
     }
 
     /**
@@ -206,6 +228,12 @@ class VehicleController extends Controller
     public function map(Request $request)
     {
         $this->validateSearch($request);
+        // Kept for a few seconds: the map is polled, and "available right now" only needs to be that fresh.
+        return response()->json($this->shared($request) ? PublicCache::remember('map', $request->query(), 15, fn () => $this->mapData($request)) : $this->mapData($request));
+    }
+
+    protected function mapData(Request $request): array
+    {
         [$from, $to] = $this->dates($request);
         $lat = $request->filled('lat') ? (float) $request->input('lat') : null;
         $lng = $request->filled('lng') ? (float) $request->input('lng') : null;
@@ -228,7 +256,7 @@ class VehicleController extends Controller
             return $card;
         })->values();
 
-        return response()->json([
+        return [
             'data' => $data,
             'counts' => [
                 'available' => $data->where('availability', 'available')->count(),
@@ -236,24 +264,42 @@ class VehicleController extends Controller
                 'on_trip' => $data->where('availability', 'on_trip')->count(),
             ],
             'updated_at' => $now->toIso8601String(),
-        ]);
+        ];
     }
 
     public function show(int $id)
     {
-        $vehicle = Vehicle::with(['hub', 'photos', 'host'])->findOrFail($id);
         $user = Auth::guard('sanctum')->user();
-        $canSee = ($vehicle->status === 'live' && ! $vehicle->host?->isBlocked()) || ($user && ($user->isAdmin() || $user->id === $vehicle->host_id));
-        if (! $canSee) abort(404, 'This vehicle is no longer available.');
+        // What a visitor sees of a live car is the same for everyone, so it is kept for a moment and dropped the moment
+        // the car, a booking or a review changes. A car that is not public is only built (fresh) for its host or an admin.
+        $public = PublicCache::remember('vehicle', ['id' => $id], 30, fn () => $this->detail($id, false));
+        $detail = $public ?? ($user ? $this->detail($id, true) : null);
+        if ($detail === null || ($public === null && ! ($user->isAdmin() || $user->id === $detail['host_id_internal']))) abort(404, 'This vehicle is no longer available.');
+        unset($detail['host_id_internal']);
 
         if ($user) {
-            RecentlyViewed::updateOrCreate(['user_id' => $user->id, 'vehicle_id' => $vehicle->id], ['viewed_at' => now()]);
+            // One statement: refresh the "viewed" time, or add the row the first time.
+            if (! RecentlyViewed::where(['user_id' => $user->id, 'vehicle_id' => $id])->update(['viewed_at' => now()])) {
+                RecentlyViewed::create(['user_id' => $user->id, 'vehicle_id' => $id, 'viewed_at' => now()]);
+            }
         }
-        $reviews = $vehicle->reviews()->with('renter')->latest()->limit(4)->get();
+        return response()->json($detail + ['is_favorite' => $user ? Favorite::where(['user_id' => $user->id, 'vehicle_id' => $id])->exists() : false]);
+    }
+
+    /** The whole page of a car. With $force false it returns null unless the car is public (live, host not blocked). */
+    protected function detail(int $id, bool $force): ?array
+    {
+        $vehicle = Vehicle::with(['hub', 'photos', 'host' => fn ($h) => $h->withCount([
+            'vehicles as live_vehicles' => fn ($v) => $v->where('status', 'live'),
+            'hostBookings as completed_trips' => fn ($b) => $b->where('status', 'completed'),
+        ])])->findOrFail($id);
+        if (! $force && ! ($vehicle->status === 'live' && ! $vehicle->host?->isBlocked())) return null;
+
+        $reviews = $vehicle->reviews()->with('renter:id,name')->latest()->limit(4)->get();
         $breakdown = $vehicle->reviews()->selectRaw('rating, COUNT(*) as total')->groupBy('rating')->pluck('total', 'rating');
 
-        return response()->json(Present::vehicleDetail($vehicle) + [
-            'is_favorite' => $user ? Favorite::where(['user_id' => $user->id, 'vehicle_id' => $vehicle->id])->exists() : false,
+        return Present::vehicleDetail($vehicle) + [
+            'host_id_internal' => $vehicle->host_id,
             'reviews' => $reviews->map(fn ($r) => Present::review($r))->values(),
             'rating_breakdown' => collect([5, 4, 3, 2, 1])->mapWithKeys(fn ($s) => [$s => (int) ($breakdown[$s] ?? 0)]),
             'booked_ranges' => $vehicle->bookings()->blocking()->where('return_at', '>', now())->orderBy('pickup_at')
@@ -262,7 +308,7 @@ class VehicleController extends Controller
                 ->sortBy('from')->values(),
             'similar' => Vehicle::live()->with(['hub', 'photos'])->where('type', $vehicle->type)->where('id', '!=', $vehicle->id)
                 ->orderByDesc('rating_avg')->limit(3)->get()->map(fn ($v) => Present::vehicleCard($v))->values(),
-        ]);
+        ];
     }
 
     public function reviews(Request $request, int $id)
@@ -290,17 +336,24 @@ class VehicleController extends Controller
 
     public function hubs()
     {
-        return response()->json(['data' => Hub::orderBy('name')->get()]);
+        $data = PublicCache::remember('hubs', [], 600, fn () => Hub::orderBy('name')->get());
+        return response()->json(['data' => $data])->header('Cache-Control', 'public, max-age=60');
     }
 
     public function stats()
     {
-        return response()->json([
-            'vehicles' => Vehicle::live()->count(),
-            'hosts' => Vehicle::live()->distinct('host_id')->count('host_id'),
-            'cities' => Vehicle::live()->whereNotNull('city')->distinct('city')->count('city'),
-            'avg_rating' => round((float) Vehicle::live()->where('rating_count', '>', 0)->avg('rating_avg'), 1),
-            'min_rate' => (int) Vehicle::live()->min('daily_rate'),
-        ]);
+        $stats = PublicCache::remember('stats', [], 60, function () {
+            // One query for all five numbers.
+            $row = Vehicle::live()->selectRaw("COUNT(*) as vehicles, COUNT(DISTINCT host_id) as hosts, COUNT(DISTINCT city) as cities,
+                AVG(CASE WHEN rating_count > 0 THEN rating_avg END) as avg_rating, MIN(daily_rate) as min_rate")->first();
+            return [
+                'vehicles' => (int) $row->vehicles,
+                'hosts' => (int) $row->hosts,
+                'cities' => (int) $row->cities,
+                'avg_rating' => round((float) $row->avg_rating, 1),
+                'min_rate' => (int) $row->min_rate,
+            ];
+        });
+        return response()->json($stats)->header('Cache-Control', 'public, max-age=60');
     }
 }

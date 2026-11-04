@@ -28,7 +28,7 @@ class AdminBookingController extends Controller
 
     public function index(Request $request)
     {
-        $q = Booking::with(['vehicle.hub', 'vehicle.photos', 'renter', 'host', 'incidents'])->latest();
+        $q = Booking::withRowFlags()->latest();
         $status = $request->input('status', 'all');
         match ($status) {
             'upcoming' => $q->where('status', 'confirmed'),
@@ -45,22 +45,29 @@ class AdminBookingController extends Controller
                 ->orWhereHas('renter', fn ($r) => $r->whereRaw('LOWER(name) LIKE ?', [$like])->orWhereRaw('LOWER(email) LIKE ?', [$like]))
                 ->orWhereHas('vehicle', fn ($v) => $v->whereRaw('LOWER(plate_number) LIKE ?', [$like])->orWhereRaw('LOWER(model) LIKE ?', [$like])));
         }
+        // All the tab numbers and the summary strip come from one query.
+        $open = "exists (select 1 from incidents where incidents.booking_id = bookings.id and incidents.status = 'open')";
+        $n = Booking::selectRaw("count(*) as total,
+            coalesce(sum(case when status = 'confirmed' then 1 else 0 end), 0) as upcoming,
+            coalesce(sum(case when status = 'active' then 1 else 0 end), 0) as active,
+            coalesce(sum(case when status = 'completed' then 1 else 0 end), 0) as completed,
+            coalesce(sum(case when status = 'cancelled' then 1 else 0 end), 0) as cancelled,
+            coalesce(sum(case when {$open} then 1 else 0 end), 0) as disputed,
+            coalesce(sum(case when admin_flag is not null and status in ('confirmed', 'active') then 1 else 0 end), 0) as flagged,
+            coalesce(sum(case when created_at >= ? then 1 else 0 end), 0) as this_month,
+            coalesce(sum(case when status = 'confirmed' and pickup_at between ? and ? then 1 else 0 end), 0) as upcoming_week", [now()->startOfMonth(), now(), now()->addDays(7)])->first();
         $counts = [
-            'all' => Booking::count(),
-            'upcoming' => Booking::where('status', 'confirmed')->count(),
-            'active' => Booking::where('status', 'active')->count(),
-            'completed' => Booking::where('status', 'completed')->count(),
-            'cancelled' => Booking::where('status', 'cancelled')->count(),
-            'disputed' => Booking::whereHas('incidents', fn ($i) => $i->where('status', 'open'))->count(),
-            'flagged' => Booking::whereNotNull('admin_flag')->whereIn('status', ['confirmed', 'active'])->count(),
+            'all' => (int) $n->total, 'upcoming' => (int) $n->upcoming, 'active' => (int) $n->active, 'completed' => (int) $n->completed,
+            'cancelled' => (int) $n->cancelled, 'disputed' => (int) $n->disputed, 'flagged' => (int) $n->flagged,
         ];
-        $monthStart = now()->startOfMonth();
-        return response()->json(Present::paginated($q->paginate(10), fn ($b) => Present::bookingRow($b, true)) + [
+        $page = $q->paginate(10);
+        Present::warm($page->getCollection());
+        return response()->json(Present::paginated($page, fn ($b) => Present::bookingRow($b, true)) + [
             'counts' => $counts,
             'summary' => [
-                'this_month' => Booking::where('created_at', '>=', $monthStart)->count(),
+                'this_month' => (int) $n->this_month,
                 'active_now' => $counts['active'],
-                'upcoming_week' => Booking::where('status', 'confirmed')->whereBetween('pickup_at', [now(), now()->addDays(7)])->count(),
+                'upcoming_week' => (int) $n->upcoming_week,
                 'cancellation_rate' => $counts['all'] ? round($counts['cancelled'] / $counts['all'] * 100, 1) : 0,
             ],
         ]);

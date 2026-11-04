@@ -15,7 +15,7 @@ class AdminListingController extends Controller
     public function index(Request $request)
     {
         $status = $request->input('status', 'pending');
-        $q = Vehicle::with(['hub', 'photos', 'host'])->when($status !== 'all', fn ($w) => $w->where('status', $status))->latest('updated_at');
+        $q = Vehicle::withListStats()->when($status !== 'all', fn ($w) => $w->where('status', $status))->latest('updated_at');
         if ($term = $request->input('q')) {
             $like = '%'.mb_strtolower($term).'%';
             $q->where(fn ($w) => $w->whereRaw('LOWER(make) LIKE ?', [$like])->orWhereRaw('LOWER(model) LIKE ?', [$like])->orWhereRaw('LOWER(plate_number) LIKE ?', [$like]));
@@ -26,7 +26,7 @@ class AdminListingController extends Controller
 
     public function show(int $id)
     {
-        return response()->json(Present::hostVehicle(Vehicle::with(['hub', 'photos', 'host'])->findOrFail($id)));
+        return response()->json(Present::hostVehicle(Vehicle::withListStats()->findOrFail($id)));
     }
 
     public function approve(Request $request, int $id)

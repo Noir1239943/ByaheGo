@@ -61,6 +61,10 @@ class TripService
 
     public function inspection(Booking $b, string $stage): ?Inspection
     {
+        if ($b->relationLoaded('inspections')) {
+            $found = $b->inspections->first(fn (Inspection $i) => $i->stage === $stage && $i->submitted_at);
+            return $found?->setRelation('booking', $b);
+        }
         return $b->inspections()->where('stage', $stage)->whereNotNull('submitted_at')->first();
     }
 
@@ -461,7 +465,7 @@ class TripService
     public function presentInspection(?Inspection $i): ?array
     {
         if (! $i) return null;
-        $i->loadMissing('photos.uploader');
+        $i->loadMissing('photos');
         return [
             'id' => $i->id, 'stage' => $i->stage, 'odometer' => $i->odometer, 'fuel_level' => $i->fuel_level, 'notes' => $i->notes,
             'submitted_at' => $i->submitted_at?->toIso8601String(), 'host_status' => $i->host_status, 'host_notes' => $i->host_notes,
@@ -496,7 +500,7 @@ class TripService
     {
         $checkin = $this->inspection($b, 'checkin');
         $checkout = $this->inspection($b, 'checkout');
-        $ext = $b->extensions()->first();
+        $ext = $b->relationLoaded('extensions') ? $b->extensions->first() : $b->extensions()->with('payment')->first();
         $late = $b->checkout_submitted_at || $b->status === 'completed'
             ? ['hours' => (int) $b->late_hours, 'fee' => (int) $b->late_fee] + $this->pricing->lateFee($b->vehicle, $b->return_at, $b->actual_return_at ?? now())
             : $this->pricing->lateFee($b->vehicle, $b->return_at, now());
@@ -514,7 +518,7 @@ class TripService
                 'is_overdue' => $b->status === 'active' && ! $b->checkout_submitted_at && $b->return_at->isPast(),
             ],
             'extension' => $ext ? $this->presentExtension($b, $ext, $viewer) : null,
-            'can_request_extension' => $viewer === 'renter' && $b->status === 'active' && ! $b->checkout_submitted_at && $b->return_at->isFuture() && ! $b->extensions()->whereIn('status', ['pending', 'awaiting_payment'])->exists(),
+            'can_request_extension' => $viewer === 'renter' && $b->status === 'active' && ! $b->checkout_submitted_at && $b->return_at->isFuture() && ! ($b->relationLoaded('extensions') ? $b->extensions->whereIn('status', ['pending', 'awaiting_payment'])->isNotEmpty() : $b->extensions()->whereIn('status', ['pending', 'awaiting_payment'])->exists()),
             'overdue_hours' => $b->status === 'active' ? $this->overdueHours($b) : 0,
             'can_report_not_returned' => $viewer === 'host' && $this->canReportNotReturned($b),
             'not_returned_after_hours' => (int) Settings::get('theft_overdue_hours'),

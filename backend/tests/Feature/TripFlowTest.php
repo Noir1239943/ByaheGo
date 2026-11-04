@@ -83,7 +83,15 @@ class TripFlowTest extends TestCase
         $small = $this->as($u)->get("/api/media/{$id}?w=300")->assertOk();
         $this->assertLessThan(strlen($full), strlen($small->getContent()));
         $this->assertSame(300, getimagesizefromstring($small->getContent())[0]);
-        $this->assertStringContainsString('max-age=86400', $small->headers->get('Cache-Control'));
+        // Submitted photos never change: the browser keeps them for good (private: they are not shared) and revalidates by ETag only.
+        $this->assertStringContainsString('immutable', $small->headers->get('Cache-Control'));
+        $this->assertStringContainsString('private', $small->headers->get('Cache-Control'));
+        $etag = $small->headers->get('ETag');
+        $this->assertNotEmpty($etag);
+        $this->as($u)->get("/api/media/{$id}?w=300", ['If-None-Match' => $etag])->assertStatus(304);
+        $this->as($u)->get("/api/media/{$id}?w=300", ['If-None-Match' => '"something-else"'])->assertOk();
+        // Someone with no right to the photo is still refused: a matching ETag is not a way around the permission check.
+        $this->guest()->get("/api/media/{$id}?w=300", ['If-None-Match' => $etag])->assertNotFound();
 
         // Submitted photos never change: a second submit, a retake and a delete are all refused.
         $this->as($u)->postJson("/api/bookings/{$ref}/inspection/checkin", ['odometer' => 7000, 'fuel_level' => 75])->assertStatus(422);

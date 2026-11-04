@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Setting;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 
 class Settings
@@ -39,12 +40,16 @@ class Settings
         'theft_overdue_hours' => 'Hours overdue before "car not returned" can be reported',
     ];
 
+    public const CACHE_KEY = 'byahego.settings';
+
     protected static ?array $cache = null;
 
     public static function all(): array
     {
         if (static::$cache === null) {
-            $stored = Schema::hasTable('settings') ? Setting::pluck('value', 'key')->all() : [];
+            // Settings almost never change, so they are kept for a few minutes instead of being read on every request
+            // (two database round trips each time). Saving a setting clears this straight away.
+            $stored = Cache::remember(static::CACHE_KEY, 300, fn () => Schema::hasTable('settings') ? Setting::pluck('value', 'key')->all() : []);
             static::$cache = [];
             foreach (static::DEFAULTS as $k => $v) {
                 static::$cache[$k] = isset($stored[$k]) ? (float) $stored[$k] : (float) $v;
@@ -65,11 +70,13 @@ class Settings
                 Setting::updateOrCreate(['key' => $k], ['value' => (string) $v]);
             }
         }
+        Cache::forget(static::CACHE_KEY);
         static::$cache = null;
     }
 
     public static function flush(): void
     {
+        Cache::forget(static::CACHE_KEY);
         static::$cache = null;
     }
 }

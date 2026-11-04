@@ -8,6 +8,7 @@ use App\Models\Vehicle;
 use App\Support\ImageHash;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\Rule;
 use finfo;
 
@@ -83,7 +84,8 @@ class MediaController extends Controller
 
     public function show(Request $request, int $id)
     {
-        $media = Media::findOrFail($id);
+        // Only the small columns first: the photo itself (a few MB of base64) is not read until it is actually needed.
+        $media = Media::select(['id', 'user_id', 'purpose', 'visibility', 'mime', 'width', 'sha1'])->findOrFail($id);
         if ($media->visibility !== 'public') {
             $user = Auth::guard('sanctum')->user();
             $allowed = $user && ($user->isAdmin() || $user->id === $media->user_id);
@@ -96,17 +98,34 @@ class MediaController extends Controller
             }
             if (! $allowed) abort(404);
         }
-        $bytes = base64_decode($media->data);
-        $mime = $media->mime;
         // ?w=480 returns a small JPEG copy for grids, so a page of ten photos doesn't download ten full-size originals.
         $w = (int) $request->query('w');
-        if ($w >= 120 && $w <= 1200 && $media->width > $w && ($thumb = $this->resize($bytes, $w))) {
-            [$bytes, $mime] = [$thumb, 'image/jpeg'];
+        $thumb = $w >= 120 && $w <= 1200 && $media->width > $w;
+
+        // A stored photo never changes (a new upload is a new id), so the browser can keep it for good and only ever
+        // asks "has it changed?" with its ETag. Photos of people and documents are never kept.
+        $keep = $media->visibility === 'public' ? 'public' : ($media->purpose === 'inspection' ? 'private' : null);
+        $headers = $keep
+            ? ['Cache-Control' => $keep.', max-age=31536000, immutable'] + ($keep === 'private' ? ['Vary' => 'Authorization'] : [])
+            : ['Cache-Control' => 'private, no-store'];
+        $etag = $media->sha1 ? '"'.$media->sha1.($thumb ? '-w'.$w : '').'"' : null;
+        if ($etag && $keep) {
+            $headers['ETag'] = $etag;
+            if (in_array($etag, array_map('trim', explode(',', str_replace('W/', '', (string) $request->header('If-None-Match')))), true)) {
+                return response('', 304, $headers);
+            }
         }
-        return response($bytes, 200, [
-            'Content-Type' => $mime,
-            // Check-in and check-out photos never change once submitted, so the browser may keep them for a day.
-            'Cache-Control' => $media->visibility === 'public' ? 'public, max-age=604800, immutable' : ($media->purpose === 'inspection' ? 'private, max-age=86400' : 'private, no-store'),
-        ]);
+
+        $key = 'media.thumb.'.$id.'.'.$w;
+        $out = $thumb ? Cache::get($key) : null;
+        $isThumb = $out !== null;
+        if ($out === null) {
+            $bytes = base64_decode((string) Media::whereKey($id)->value('data'));
+            $small = $thumb ? $this->resize($bytes, $w) : null;
+            $isThumb = $small !== null && $small !== '';
+            $out = $isThumb ? $small : $bytes;
+            if ($isThumb && $keep) Cache::put($key, $out, now()->addDay());
+        }
+        return response($out, 200, $headers + ['Content-Type' => $isThumb ? 'image/jpeg' : $media->mime]);
     }
 }

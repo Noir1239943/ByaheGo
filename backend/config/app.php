@@ -55,6 +55,9 @@ return [
     'url' => env('APP_URL', 'http://localhost'),
 
     // The website (Vercel) that the API sends people back to after OAuth sign-in and in password reset emails.
+    // Measure every API request (time + query count) into storage/logs/perf.log. For tuning only.
+    'perf_log' => env('PERF_LOG', false) === 'sql' ? 'sql' : filter_var(env('PERF_LOG', false), FILTER_VALIDATE_BOOLEAN),
+
     'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
 
     // Shown to blocked people as the place to appeal.

@@ -10,11 +10,12 @@ import { useAuth } from '@/hooks/useAuth'
 import { formatDateTime, peso } from '@/lib/format'
 import { downloadIcs } from '@/lib/calendar'
 import { bookingService } from '@/services/bookings'
+import { STALE } from '@/lib/constants'
 
 export function BookingConfirmedSection() {
   const { reference = '' } = useParams()
   const { user } = useAuth()
-  const { data: b, isLoading, error } = useQuery({ queryKey: ['booking', reference], queryFn: () => bookingService.get(reference) })
+  const { data: b, isLoading, error } = useQuery({ queryKey: ['booking', reference], queryFn: () => bookingService.get(reference), staleTime: STALE.live })
   if (isLoading) return <PageLoader />
   if (error || !b) return <div className="container-page py-10"><ErrorState error={error} /></div>
   const charge = b.payments.find((p) => p.type === 'charge')

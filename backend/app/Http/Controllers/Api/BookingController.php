@@ -33,7 +33,7 @@ class BookingController extends Controller
     public function index(Request $request)
     {
         $tab = $request->input('tab', 'upcoming');
-        $q = Booking::with(['vehicle.hub', 'vehicle.photos', 'host', 'review', 'incidents'])->where('renter_id', $request->user()->id);
+        $q = Booking::withRowFlags()->where('renter_id', $request->user()->id);
         match ($tab) {
             'active' => $q->where('status', 'active')->orderBy('return_at'),
             'past' => $q->where('status', 'completed')->orderByDesc('return_at'),
@@ -41,8 +41,9 @@ class BookingController extends Controller
             default => $q->whereIn('status', ['confirmed', 'pending'])->orderBy('pickup_at'),
         };
         $counts = Booking::where('renter_id', $request->user()->id)->selectRaw('status, COUNT(*) as total')->groupBy('status')->pluck('total', 'status');
+        $rows = $q->get()->each(fn ($b) => $b->setRelation('renter', $request->user()));
         return response()->json([
-            'data' => $q->get()->map(fn ($b) => Present::bookingRow($b))->values(),
+            'data' => Present::bookingRows($rows),
             'counts' => [
                 'upcoming' => (int) ($counts['confirmed'] ?? 0) + (int) ($counts['pending'] ?? 0),
                 'active' => (int) ($counts['active'] ?? 0),

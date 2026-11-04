@@ -14,13 +14,14 @@ use App\Support\Notifier;
 use App\Support\Present;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class AdminUserController extends Controller
 {
     public function index(Request $request)
     {
-        $q = User::query()->latest();
+        $q = User::query()->latest()->withCount(['bookings', 'vehicles']);
         if ($term = $request->input('q')) {
             $like = '%'.mb_strtolower($term).'%';
             $q->where(fn ($w) => $w->whereRaw('LOWER(name) LIKE ?', [$like])->orWhereRaw('LOWER(email) LIKE ?', [$like])->orWhereRaw('LOWER(username) LIKE ?', [$like]));
@@ -30,8 +31,8 @@ class AdminUserController extends Controller
         if ($v = $request->input('verification')) $q->where('verification_status', $v);
         $page = $q->paginate(12);
         return response()->json(Present::paginated($page, fn (User $u) => Present::userBrief($u) + [
-            'bookings_count' => $u->bookings()->count(),
-            'vehicles_count' => $u->vehicles()->count(),
+            'bookings_count' => $u->bookings_count,
+            'vehicles_count' => $u->vehicles_count,
             'last_login_at' => $u->last_login_at?->toIso8601String(),
         ]));
     }
@@ -39,17 +40,17 @@ class AdminUserController extends Controller
     public function show(int $id)
     {
         $user = User::with('latestLicense')->findOrFail($id);
+        $st = DB::selectOne("select
+            (select count(*) from bookings where renter_id = ? and status = 'completed') as trips,
+            (select coalesce(sum(total), 0) from bookings where renter_id = ? and status != 'cancelled') as spent,
+            (select count(*) from bookings where renter_id = ? and status = 'cancelled') as cancellations,
+            (select count(*) from vehicles where host_id = ?) as vehicles,
+            (select coalesce(sum(host_earnings), 0) from bookings where host_id = ? and status = 'completed') as host_earnings", array_fill(0, 5, $user->id));
         return response()->json([
             'user' => Present::user($user),
             'license' => Present::license($user->latestLicense, true),
-            'stats' => [
-                'trips' => $user->bookings()->where('status', 'completed')->count(),
-                'spent' => (int) $user->bookings()->where('status', '!=', 'cancelled')->sum('total'),
-                'cancellations' => $user->bookings()->where('status', 'cancelled')->count(),
-                'vehicles' => $user->vehicles()->count(),
-                'host_earnings' => (int) Booking::where('host_id', $user->id)->where('status', 'completed')->sum('host_earnings'),
-            ],
-            'bookings' => $user->bookings()->with(['vehicle.hub', 'vehicle.photos', 'host'])->latest()->limit(8)->get()->map(fn ($b) => Present::bookingRow($b)),
+            'stats' => ['trips' => (int) $st->trips, 'spent' => (int) $st->spent, 'cancellations' => (int) $st->cancellations, 'vehicles' => (int) $st->vehicles, 'host_earnings' => (int) $st->host_earnings],
+            'bookings' => Present::bookingRows($user->bookings()->withRowFlags()->latest()->limit(8)->get()->each(fn ($b) => $b->setRelation('renter', $user))),
         ]);
     }
 
@@ -102,7 +103,7 @@ class AdminUserController extends Controller
     {
         $status = $request->input('status', 'pending');
         $decision = $request->input('decision'); // auto_approved | auto_rejected: what the rules decided, whoever has the last word
-        $q = DriverLicense::with(['user', 'overrider'])
+        $q = DriverLicense::with(['user', 'overrider', 'reviewer'])
             ->when($decision, fn ($w) => $w->where('auto_decision', $decision === 'auto_approved' ? 'approve' : 'reject'))
             ->when(! $decision && $status !== 'all', fn ($w) => $w->where('status', $status))
             ->latest()->latest('id');

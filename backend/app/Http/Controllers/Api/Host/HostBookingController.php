@@ -24,7 +24,7 @@ class HostBookingController extends Controller
     public function index(Request $request)
     {
         $tab = $request->input('tab', 'upcoming');
-        $q = Booking::with(['vehicle.hub', 'vehicle.photos', 'renter', 'incidents'])->where('host_id', $request->user()->id);
+        $q = Booking::withRowFlags()->where('host_id', $request->user()->id);
         match ($tab) {
             'on_trip' => $q->where('status', 'active')->orderBy('return_at'),
             'completed' => $q->where('status', 'completed')->orderByDesc('return_at'),
@@ -37,7 +37,7 @@ class HostBookingController extends Controller
         }
         $counts = Booking::where('host_id', $request->user()->id)->selectRaw('status, COUNT(*) as total')->groupBy('status')->pluck('total', 'status');
         return response()->json([
-            'data' => $q->limit(100)->get()->map(fn ($b) => Present::bookingRow($b)),
+            'data' => Present::bookingRows($q->limit(100)->get()->each(fn ($b) => $b->setRelation('host', $request->user()))),
             'counts' => ['upcoming' => (int) ($counts['confirmed'] ?? 0), 'on_trip' => (int) ($counts['active'] ?? 0),
                 'completed' => (int) ($counts['completed'] ?? 0), 'cancelled' => (int) ($counts['cancelled'] ?? 0)],
         ]);

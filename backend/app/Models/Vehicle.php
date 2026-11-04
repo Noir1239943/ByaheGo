@@ -74,6 +74,20 @@ class Vehicle extends Model
         return trim("{$this->make} {$this->model} {$this->year}");
     }
 
+    /**
+     * What a host or admin listing page shows for each car (bookings, earnings, and the host's own totals), added to the
+     * same query as columns, instead of four extra queries per car.
+     */
+    public function scopeWithListStats(Builder $q): Builder
+    {
+        return $q->with(['hub', 'photos', 'host' => fn ($h) => $h->withCount([
+            'vehicles as live_vehicles' => fn ($v) => $v->where('status', 'live'),
+            'hostBookings as completed_trips' => fn ($b) => $b->where('status', 'completed'),
+        ])])
+            ->withCount(['bookings as bookings_total' => fn ($b) => $b->whereIn('status', ['confirmed', 'active', 'completed'])])
+            ->withSum(['bookings as earnings_total' => fn ($b) => $b->where('status', 'completed')], 'host_earnings');
+    }
+
     public function scopeLive(Builder $q): Builder
     {
         return $q->where('status', 'live')->whereHas('host', fn ($h) => $h->usable());

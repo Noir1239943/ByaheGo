@@ -14,6 +14,7 @@ import { bookingService } from '@/services/bookings'
 import { tripService, type TripStage } from '@/services/trip'
 import type { ShotAngle } from '@/types'
 import { GuidedCamera } from './GuidedCamera'
+import { STALE } from '@/lib/constants'
 
 const TEXT: Record<TripStage, { title: string; intro: string; done: string }> = {
   checkin: {
@@ -34,8 +35,8 @@ export function InspectionSection() {
   const stage: TripStage = stageParam === 'checkout' ? 'checkout' : 'checkin'
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const booking = useQuery({ queryKey: ['booking', reference], queryFn: () => bookingService.get(reference) })
-  const wizard = useQuery({ queryKey: ['wizard', reference, stage], queryFn: () => tripService.wizard(reference, stage), refetchOnWindowFocus: false })
+  const booking = useQuery({ queryKey: ['booking', reference], queryFn: () => bookingService.get(reference), staleTime: STALE.live })
+  const wizard = useQuery({ queryKey: ['wizard', reference, stage], queryFn: () => tripService.wizard(reference, stage), refetchOnWindowFocus: false, staleTime: STALE.live })
   const [index, setIndex] = useState(0)
   const [previews, setPreviews] = useState<Record<string, string>>({})
   const [retaking, setRetaking] = useState(false)

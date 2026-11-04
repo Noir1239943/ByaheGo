@@ -9,6 +9,8 @@ export function VehicleGallery({ v }: { v: VehicleDetail }) {
   const [open, setOpen] = useState(false)
   const [index, setIndex] = useState(0)
   const photos = v.photos
+  // Tiles use the smaller copies; the full-size original is only fetched when the viewer opens.
+  const tiles = v.photo_thumbs?.length === photos.length ? v.photo_thumbs : photos
   if (photos.length === 0) {
     return (
       <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
@@ -38,7 +40,7 @@ export function VehicleGallery({ v }: { v: VehicleDetail }) {
     <>
       <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
         <button onClick={() => { setIndex(0); setOpen(true) }} className="relative aspect-[16/10] overflow-hidden rounded-3xl">
-          <img src={photos[0]} alt={v.name} className="h-full w-full object-cover" />
+          <img src={tiles[0]} alt={v.name} className="h-full w-full object-cover" />
           <span className="absolute right-3 bottom-3 inline-flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-sm font-semibold shadow">
             <Camera className="size-4" /> View all {photos.length} photos
           </span>
@@ -47,7 +49,7 @@ export function VehicleGallery({ v }: { v: VehicleDetail }) {
           {[1, 2].map((i) =>
             photos[i] ? (
               <button key={i} onClick={() => { setIndex(i); setOpen(true) }} className="overflow-hidden rounded-3xl">
-                <img src={photos[i]} alt={`${v.name} photo ${i + 1}`} className="h-full w-full object-cover" />
+                <img src={tiles[i]} alt={`${v.name} photo ${i + 1}`} loading="lazy" className="h-full w-full object-cover" />
               </button>
             ) : (
               <div key={i} className="overflow-hidden rounded-3xl">

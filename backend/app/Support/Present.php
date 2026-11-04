@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Models\Vehicle;
 use App\Services\BookingService;
 use App\Services\PaymentGateway;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 
 /** Shapes models into the JSON the frontend consumes. */
 class Present
@@ -25,10 +26,17 @@ class Present
         return mb_strtoupper($first.$last);
     }
 
-    public static function mediaUrl(?int $id): ?string
+    /** $width asks for a smaller copy (see MediaController), so grids and cards never download full-size originals. */
+    public static function mediaUrl(?int $id, ?int $width = null): ?string
     {
-        return $id ? url('/api/media/'.$id) : null;
+        return $id ? url('/api/media/'.$id).($width ? '?w='.$width : '') : null;
     }
+
+    /** Card and grid pictures are shown at most about 600 px wide. */
+    public const CARD_PHOTO_WIDTH = 640;
+
+    /** The gallery's big picture on the car page. The full-size original only loads when someone opens the viewer. */
+    public const GALLERY_PHOTO_WIDTH = 960;
 
     public static function userBrief(?User $u): ?array
     {
@@ -47,8 +55,46 @@ class Present
         ];
     }
 
+    /** The user columns a booking row or card shows (never the password hash, tokens or payout details). */
+    public const USER_BRIEF_COLUMNS = ['id', 'name', 'username', 'email', 'phone', 'role', 'status', 'verification_status', 'created_at'];
+
+    /**
+     * Gives every booking its renter and host with ONE query for the whole list (instead of one per relation, and
+     * never one per booking). Relations that are already loaded are left alone.
+     */
+    public static function parties(iterable $bookings): void
+    {
+        $list = collect($bookings);
+        $ids = $list->flatMap(fn (Booking $b) => [
+            ...($b->relationLoaded('renter') ? [] : [$b->renter_id]),
+            ...($b->relationLoaded('host') ? [] : [$b->host_id]),
+        ])->filter()->unique()->values();
+        if ($ids->isEmpty()) return;
+        $users = User::whereIn('id', $ids)->get(self::USER_BRIEF_COLUMNS)->keyBy('id');
+        foreach ($list as $b) {
+            if (! $b->relationLoaded('renter')) $b->setRelation('renter', $users->get($b->renter_id));
+            if (! $b->relationLoaded('host')) $b->setRelation('host', $users->get($b->host_id));
+        }
+    }
+
+    /** Loads what a booking row shows (vehicle, hub, photos, renter, host) for a whole page of bookings in a fixed number of queries. */
+    public static function warm(iterable $bookings): EloquentCollection
+    {
+        $models = $bookings instanceof EloquentCollection ? $bookings : new EloquentCollection(collect($bookings)->all());
+        $models->loadMissing(['vehicle.hub', 'vehicle.photos']);
+        self::parties($models);
+        return $models;
+    }
+
+    /** A list of booking rows. */
+    public static function bookingRows(iterable $bookings, bool $admin = false): \Illuminate\Support\Collection
+    {
+        return self::warm($bookings)->map(fn (Booking $b) => self::bookingRow($b, $admin))->values();
+    }
+
     public static function user(User $u): array
     {
+        $providers = $u->relationLoaded('socialAccounts') ? $u->socialAccounts->pluck('provider') : $u->socialAccounts()->pluck('provider');
         return self::userBrief($u) + [
             'city' => $u->city,
             'is_admin' => $u->isAdmin(),
@@ -61,8 +107,8 @@ class Present
             'notify_email' => $u->notify_email,
             'notify_sms' => $u->notify_sms,
             'has_password' => $u->password !== null,
-            'google_linked' => $u->socialAccounts()->where('provider', 'google')->exists(),
-            'facebook_linked' => $u->socialAccounts()->where('provider', 'facebook')->exists(),
+            'google_linked' => $providers->contains('google'),
+            'facebook_linked' => $providers->contains('facebook'),
             'payout' => $u->payout_method ? [
                 'method' => $u->payout_method,
                 'account_name' => $u->payout_account_name,
@@ -101,7 +147,7 @@ class Present
             'driver_fee_per_day' => $v->driver_fee_per_day,
             'delivery_available' => $v->delivery_available,
             'pet_friendly' => $v->pet_friendly,
-            'photo' => $photo ? self::mediaUrl($photo->media_id) : null,
+            'photo' => $photo ? self::mediaUrl($photo->media_id, self::CARD_PHOTO_WIDTH) : null,
             // Own-location pins are rounded to about 1 km. The exact pin is only in the booking and the host's own listing.
             'lat' => $v->publicLat(),
             'lng' => $v->publicLng(),
@@ -111,11 +157,13 @@ class Present
     public static function vehicleDetail(Vehicle $v): array
     {
         $host = $v->host;
-        $hostTrips = Booking::where('host_id', $host->id)->where('status', 'completed')->count();
+        // A list page already counted these on the host in its own query (Vehicle::withListStats); a single page counts here.
+        $hostTrips = $host->completed_trips ?? Booking::where('host_id', $host->id)->where('status', 'completed')->count();
         return self::vehicleCard($v) + [
             'description' => $v->description,
             'features' => $v->features ?? [],
             'photos' => $v->photos->map(fn ($p) => self::mediaUrl($p->media_id))->values(),
+            'photo_thumbs' => $v->photos->map(fn ($p) => self::mediaUrl($p->media_id, self::GALLERY_PHOTO_WIDTH))->values(),
             'weekly_rate' => $v->weekly_rate,
             'security_deposit' => $v->security_deposit,
             'late_fee_per_hour' => $v->late_fee_per_hour,
@@ -146,7 +194,7 @@ class Present
                 'joined_at' => $host->created_at?->toIso8601String(),
                 'trips' => $hostTrips,
                 'verified' => true,
-                'vehicles' => $host->vehicles()->where('status', 'live')->count(),
+                'vehicles' => $host->live_vehicles ?? $host->vehicles()->where('status', 'live')->count(),
             ],
             'policies' => [
                 'cancellation_cutoff_hours' => (int) Settings::get('cancellation_cutoff_hours'),
@@ -179,8 +227,8 @@ class Present
             'submitted_at' => $v->submitted_at?->toIso8601String(),
             'approved_at' => $v->approved_at?->toIso8601String(),
             'created_at' => $v->created_at?->toIso8601String(),
-            'bookings_count' => $v->bookings()->whereIn('status', ['confirmed', 'active', 'completed'])->count(),
-            'earnings' => (int) $v->bookings()->where('status', 'completed')->sum('host_earnings'),
+            'bookings_count' => $v->bookings_total ?? $v->bookings()->whereIn('status', ['confirmed', 'active', 'completed'])->count(),
+            'earnings' => (int) (array_key_exists('earnings_total', $v->getAttributes()) ? $v->earnings_total : $v->bookings()->where('status', 'completed')->sum('host_earnings')),
             'host_name' => $v->host?->name,
         ];
     }
@@ -266,7 +314,11 @@ class Present
 
     public static function booking(Booking $b, string $viewer = 'renter'): array
     {
-        $b->loadMissing(['vehicle.hub', 'vehicle.photos', 'renter', 'host', 'payments.booking', 'payments.invoice', 'payments.requester', 'inspections.photos.uploader', 'incidents.reporter', 'review', 'agreement']);
+        $b->loadMissing(['vehicle.hub', 'vehicle.photos', 'payments.invoice', 'inspections.photos', 'incidents', 'review', 'agreement', 'extensions.payment']);
+        if ($viewer === 'admin') $b->loadMissing('payments.requester');
+        self::parties([$b]);
+        // The payments belong to this booking: hand it to them instead of loading it again for each one.
+        $b->payments->each(fn ($p) => $p->setRelation('booking', $b));
         $plan = Protection::get($b->protection_plan);
         $service = app(BookingService::class);
         $hideExactPickup = $b->status === 'cancelled' && $viewer === 'renter';
@@ -384,9 +436,9 @@ class Present
             'vehicle' => $b->vehicle ? self::vehicleCard($b->vehicle) : null,
             'renter' => self::userBrief($b->renter),
             'host' => self::userBrief($b->host),
-            'has_open_incident' => $b->relationLoaded('incidents') ? $b->incidents->where('status', 'open')->isNotEmpty() : false,
+            'has_open_incident' => array_key_exists('has_open_incident', $b->getAttributes()) ? (bool) $b->getAttribute('has_open_incident') : ($b->relationLoaded('incidents') && $b->incidents->where('status', 'open')->isNotEmpty()),
             'can_cancel' => app(BookingService::class)->canRenterCancel($b),
-            'can_review' => $b->status === 'completed' && ! ($b->relationLoaded('review') ? $b->review : $b->review()->exists()),
+            'can_review' => $b->status === 'completed' && ! (array_key_exists('has_review', $b->getAttributes()) ? (bool) $b->getAttribute('has_review') : ($b->relationLoaded('review') ? $b->review : $b->review()->exists())),
             'created_at' => $b->created_at?->toIso8601String(),
         ];
     }

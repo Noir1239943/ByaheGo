@@ -4,10 +4,21 @@ namespace App\Providers;
 
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
+use App\Models\Booking;
+use App\Models\Hub;
+use App\Models\PersonalAccessToken;
+use App\Models\Review;
+use App\Models\User;
+use App\Models\Vehicle;
+use App\Models\VehicleBlockedDate;
+use App\Models\VehiclePhoto;
+use App\Support\PublicCache;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -18,6 +29,19 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Whatever can change a public page retires the cached copies (see PublicCache).
+        foreach ([Vehicle::class, VehiclePhoto::class, Booking::class, VehicleBlockedDate::class, Review::class, Hub::class] as $model) {
+            $model::saved(fn () => PublicCache::bump());
+            $model::deleted(fn () => PublicCache::bump());
+        }
+        User::saved(fn (User $u) => $u->wasChanged(['status', 'role', 'suspended_until', 'revoked_at']) ? PublicCache::bump() : null);
+
+        Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
+
+        // A relation that is read without being eager-loaded is an N+1 query (one database round trip per row, ~150 ms each
+        // on Neon). Outside production it throws, so new ones are caught in development and in the tests.
+        Model::preventLazyLoading(! $this->app->isProduction());
+
         // 5 login attempts per minute for the same account name + IP, with a message people can act on.
         RateLimiter::for('login', fn (Request $request) => Limit::perMinute(5)->by(strtolower((string) $request->input('login')).'|'.$request->ip())
             ->response(fn (Request $r, array $headers) => $this->tooMany('Too many login attempts', $headers, 'login')));

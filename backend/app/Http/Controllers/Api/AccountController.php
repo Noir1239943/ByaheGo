@@ -9,6 +9,7 @@ use App\Models\RecentlyViewed;
 use App\Models\Vehicle;
 use App\Support\Present;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
@@ -88,9 +89,7 @@ class AccountController extends Controller
     public function billing(Request $request)
     {
         $user = $request->user();
-        $mine = Payment::where('user_id', $user->id);
-        $sum = fn (array $types, array $status = ['succeeded']) => (int) (clone $mine)->whereIn('type', $types)->whereIn('status', $status)->sum('amount');
-        $q = Payment::with(['booking.vehicle', 'invoice'])->where('user_id', $user->id)->latest('id');
+        $q = Payment::with(['booking:id,reference,vehicle_id', 'booking.vehicle:id,make,model,year', 'invoice'])->where('user_id', $user->id)->latest('id');
         // Filters: what kind of line, its status, and a date range. Paged on the server.
         if ($type = $request->input('type')) {
             $q->whereIn('type', match ($type) {
@@ -110,14 +109,24 @@ class AccountController extends Controller
         }
         if ($from = $request->input('from')) $q->whereDate('created_at', '>=', $from);
         if ($to = $request->input('to')) $q->whereDate('created_at', '<=', $to);
+        // The six summary figures come from one query.
+        $in = implode(',', array_fill(0, count(Payment::MONEY_IN), '?'));
+        $t = DB::selectOne("select
+            (select coalesce(sum(amount), 0) from payments where user_id = ? and type in ({$in}) and status = 'succeeded') as total_paid,
+            (select coalesce(sum(amount), 0) from payments where user_id = ? and type = 'refund' and status = 'succeeded') as total_refunded,
+            (select coalesce(sum(amount), 0) from payments where user_id = ? and type = 'refund' and status = 'pending') as refunds_pending,
+            (select coalesce(sum(amount), 0) from payments where user_id = ? and type in ('late_fee', 'damage') and status = 'succeeded') as fees_and_charges,
+            (select coalesce(sum(balance_due), 0) from bookings where renter_id = ?) as balance_due,
+            (select coalesce(sum(security_deposit), 0) from bookings where renter_id = ? and deposit_status in ('held', 'on_hold') and status in ('confirmed', 'active', 'completed')) as deposits_on_hold",
+            [$user->id, ...Payment::MONEY_IN, $user->id, $user->id, $user->id, $user->id, $user->id]);
         return response()->json(\App\Support\Present::paginated($q->paginate(15), fn ($p) => Present::payment($p)) + [
             'summary' => [
-                'total_paid' => $sum(Payment::MONEY_IN),
-                'total_refunded' => $sum(['refund']),
-                'refunds_pending' => $sum(['refund'], ['pending']),
-                'fees_and_charges' => $sum(['late_fee', 'damage']),
-                'balance_due' => (int) $user->bookings()->sum('balance_due'),
-                'deposits_on_hold' => (int) $user->bookings()->whereIn('deposit_status', ['held', 'on_hold'])->whereIn('status', ['confirmed', 'active', 'completed'])->sum('security_deposit'),
+                'total_paid' => (int) $t->total_paid,
+                'total_refunded' => (int) $t->total_refunded,
+                'refunds_pending' => (int) $t->refunds_pending,
+                'fees_and_charges' => (int) $t->fees_and_charges,
+                'balance_due' => (int) $t->balance_due,
+                'deposits_on_hold' => (int) $t->deposits_on_hold,
             ],
         ]);
     }

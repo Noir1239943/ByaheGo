@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import { tokenStore } from '@/lib/api'
 import { authService } from '@/services/auth'
 import type { User } from '@/types'
@@ -34,12 +35,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh()
   }, [refresh])
 
-  // Keep the notification badge fresh while the tab is open.
-  useEffect(() => {
-    if (!user) return
-    const id = window.setInterval(() => void refresh(), 60000)
-    return () => window.clearInterval(id)
-  }, [user, refresh])
+  // Keep the notification badge fresh while the tab is open and visible (a hidden tab asks for nothing).
+  useVisibleInterval(() => void refresh(), 60_000, !!user)
 
   useEffect(() => {
     const onSignedOut = (e: Event) => {

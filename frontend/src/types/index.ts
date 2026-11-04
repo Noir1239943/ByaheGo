@@ -107,6 +107,8 @@ export interface VehicleDetail extends VehicleCard {
   description: string | null
   features: string[]
   photos: string[]
+  /** Smaller copies of `photos` (same order) for the gallery tiles; the full size opens in the viewer. */
+  photo_thumbs: string[]
   weekly_rate: number | null
   security_deposit: number
   late_fee_per_hour: number

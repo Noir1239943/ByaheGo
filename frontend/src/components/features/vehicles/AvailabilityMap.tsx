@@ -1,10 +1,11 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { List, Map as MapIcon, RefreshCw, Radio } from 'lucide-react'
 import { VehicleCard } from '@/components/common/VehicleCard'
 import { ErrorState } from '@/components/common/States'
 import { EmptyState, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
+import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import { formatRange, timeAgo } from '@/lib/format'
 import { vehicleService } from '@/services/vehicles'
 import { useVehicleSearch } from './useVehicleSearch'
@@ -34,10 +35,8 @@ export function AvailabilityMap() {
     refetchOnWindowFocus: true,
     placeholderData: keepPreviousData,
   })
-  useEffect(() => {
-    const id = window.setInterval(() => tick((n) => n + 1), 5000)
-    return () => window.clearInterval(id)
-  }, [])
+  // Re-render every few seconds so "Updated 12s ago" stays true, but not while the tab is hidden.
+  useVisibleInterval(() => tick((n) => n + 1), 5000)
 
   if (error && !data) return <ErrorState error={error} onRetry={() => void refetch()} />
 

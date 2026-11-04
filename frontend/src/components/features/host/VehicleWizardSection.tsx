@@ -10,7 +10,7 @@ import { VehicleImage } from '@/components/common/VehicleImage'
 import { Alert, Button, Card, Chip, Input, Select, Stepper, Switch, Textarea } from '@/components/ui'
 import { getErrorMessage, getFieldErrors, mediaUrl } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { FEATURE_OPTIONS, VEHICLE_TYPES, typeLabel } from '@/lib/constants'
+import { FEATURE_OPTIONS, STALE, VEHICLE_TYPES, typeLabel } from '@/lib/constants'
 import { capitalize, peso } from '@/lib/format'
 import { CITIES } from '@/lib/search'
 import { authService } from '@/services/auth'
@@ -85,7 +85,7 @@ export function VehicleWizardSection() {
   const [customFeature, setCustomFeature] = useState('')
 
   const existing = useQuery({ queryKey: ['host', 'vehicle', routeId], queryFn: () => hostService.vehicle(routeId!), enabled: !!routeId })
-  const hubs = useQuery({ queryKey: ['hubs'], queryFn: vehicleService.hubs, staleTime: 600000 })
+  const hubs = useQuery({ queryKey: ['hubs'], queryFn: vehicleService.hubs, staleTime: STALE.static })
 
   useEffect(() => {
     if (existing.data) {
@@ -205,7 +205,7 @@ export function VehicleWizardSection() {
       <p className="text-xs font-bold tracking-wider text-ink-500 uppercase">Renter preview</p>
       <div className="overflow-hidden rounded-2xl border border-line-200 bg-white shadow-card">
         <div className="relative aspect-[4/3]">
-          <VehicleImage photo={form.photo_ids[0] ? mediaUrl(form.photo_ids[0]) : null} type={form.type} color={form.color_hex} alt="Preview" />
+          <VehicleImage photo={form.photo_ids[0] ? mediaUrl(form.photo_ids[0], 640) : null} type={form.type} color={form.color_hex} alt="Preview" />
           <span className="absolute top-3 left-3 inline-flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-semibold shadow-sm">{form.instant_book ? <><Zap className="size-3 fill-brand text-brand" /> Instant book</> : 'Not listed yet'}</span>
         </div>
         <div className="p-4">

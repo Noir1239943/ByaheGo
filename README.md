@@ -103,7 +103,7 @@ cp .env.example .env                    # VITE_API_URL=http://localhost:8000
 npm run dev                             # http://localhost:5173
 ```
 
-Tests: `cd backend && php artisan test` (134 feature tests, run on an in-memory SQLite database so they never touch Neon, with Xendit faked: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, the rental agreement, Xendit checkout, webhooks, refunds and invoices, 24-hour cancellation rule, guided check-in/out photos, excess hours, extensions, the "car not returned" report, the evidence packet, damage/theft disputes, suspensions, settings).
+Tests: `cd backend && php artisan test` (148 feature tests, run on an in-memory SQLite database so they never touch Neon, with Xendit faked: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, the rental agreement, Xendit checkout, webhooks, refunds and invoices, 24-hour cancellation rule, guided check-in/out photos, excess hours, extensions, the "car not returned" report, the evidence packet, damage/theft disputes, suspensions, settings).
 
 ---
 
@@ -203,6 +203,24 @@ Checkout uses **Xendit's hosted payment page** (Payment Sessions). Card and wall
 **Scheduled work.** `php artisan trips:sweep` (every 10 minutes, started by `docker/start.sh`) sends the return reminders, accepts unanswered check-ins and completes unreviewed returns.
 
 **Do uploaded files survive redeploys?** Yes: every photo (license, vehicle, check-in/out) is stored **inside the Postgres database** as base64, not on the web server's disk, so Render redeploys never lose them. The limit is Neon's storage: a trip's 20+ photos are about 6–10 MB. See the next section.
+
+---
+
+## Speed (local development against Neon)
+
+Neon is in Singapore, so every database query from a laptop in Cebu is a network round trip (about 150 ms), and opening a fresh connection costs about a second. The app is built around that:
+
+| What | How |
+|---|---|
+| **Measure first** | Set `PERF_LOG=true` in `backend/.env`. Every request then writes `METHOD  route  status  total-ms  queries  db-ms` to `backend/storage/logs/perf.log` and sends the same numbers in an `X-Perf` response header (visible in the browser's Network tab). `PERF_LOG=sql` also lists every query in `perf-sql.log`, which is how repeated and unneeded queries are found. |
+| **No N+1 queries** | `Model::preventLazyLoading()` is on everywhere except production, so reading a relation that was not eager-loaded throws an error in development and in the tests. `PerformanceTest` also checks that a list costs the same number of queries with 1 row as with 5. Lists load vehicle, hub, photos, renter and host with one query each for the whole page (`Present::parties` / `Present::warm`), counts and sums come back as columns of the same query, and dashboards read all their headline numbers in a single statement. |
+| **Keep the connection open** | `DB_PERSISTENT=true` in `backend/.env` reuses one PostgreSQL connection between requests instead of reconnecting every time. Checked: a connection that Neon closes is replaced on the next request (reads and writes both succeed), and a transaction left open by a crashed request is rolled back, not carried over. Off by default and not set on Render (Apache runs many workers and each would hold a Neon connection). |
+| **Short-lived public cache** | Plain browsing (filters, sort, page), a car's page, the map, hubs and stats are cached for 15 to 60 seconds. Anything that changes a car, a photo, a booking, a block date, a review, a hub or a host's status clears all of it at once (`PublicCache`), so a result is never older than the last change. Typed searches, places and date ranges are always answered fresh. Settings are cached for 5 minutes and cleared when an admin saves them. |
+| **Photos** | A stored photo never changes, so `/api/media/{id}` is sent with `Cache-Control: immutable` for a year and an `ETag`; the browser then asks "has it changed?" and gets an empty `304` without the photo being read from the database. Lists and cards use the resized copy (`?w=640`), the gallery uses `?w=960`, and the full size only loads in the viewer. Resized copies are kept in the server cache. IDs and licences are never cached (`no-store`). |
+| **Website** | Pages are lazy-loaded; the face model, OCR and maps load only on the pages that use them. React Query keeps data fresh for a set time (`STALE` in `lib/constants.ts`: 10 s for one trip, 45 s for lists, 60 s for browsing, 10 min for hubs and stats), polling stops while the tab is hidden, the notification list loads only when the bell is opened, admin pages load only the sidebar numbers (not the whole overview), and trip photos load as they scroll into view. |
+| **Token bookkeeping** | The "last used" time of a sign-in is written at most every 5 minutes instead of on every request. |
+
+**Requests one at a time.** PHP's built-in server (`php artisan serve`) answers one request at a time on Windows, so a page that asks for five things waits for them in turn. `node dev-parallel.mjs` (in `backend`) starts four PHP workers and shares requests between them on the same port 8000; use it instead of `php artisan serve` when developing. Production (Apache on Render) is already parallel.
 
 ---
 

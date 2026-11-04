@@ -2,11 +2,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from 'react-router'
 import { Toaster } from 'sonner'
 import { AuthProvider } from '@/context/AuthContext'
+import { STALE } from '@/lib/constants'
 import { router } from '@/routes/router'
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 20_000 },
+    queries: { retry: 1, refetchOnWindowFocus: false, staleTime: STALE.list },
   },
 })
 

@@ -27,12 +27,13 @@ import { formatDateTime, localToIso, peso, timeUntil, toLocalInput } from '@/lib
 import { bookingService } from '@/services/bookings'
 import { tripService } from '@/services/trip'
 import type { PaymentMethod } from '@/types'
+import { STALE } from '@/lib/constants'
 
 export function TripDetailSection() {
   const { reference = '' } = useParams()
   const [params, setParams] = useSearchParams()
   const qc = useQueryClient()
-  const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['booking', reference], queryFn: () => bookingService.get(reference) })
+  const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['booking', reference], queryFn: () => bookingService.get(reference), staleTime: STALE.live })
   const [modal, setModal] = useState<null | 'cancel' | 'review' | 'pay' | 'report' | 'agreement' | 'extend'>(null)
   const [extend, setExtend] = useState({ return_at: '', note: '' })
   const [extendErrors, setExtendErrors] = useState<Record<string, string>>({})

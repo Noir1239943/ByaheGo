@@ -13,6 +13,7 @@ export type AdminUserRow = UserBrief & { bookings_count: number; vehicles_count:
 type Params = Record<string, string | number | undefined>
 
 export const adminService = {
+  attention: () => api.get<AdminOverview['attention']>('/admin/attention').then((r) => r.data),
   overview: (range: string) => api.get<AdminOverview>('/admin/overview', { params: { range } }).then((r) => r.data),
   users: (params: Params) => api.get<Paginated<AdminUserRow>>('/admin/users', { params }).then((r) => r.data),
   user: (id: number | string) => api.get<{ user: User; license: License | null; stats: Record<string, number>; bookings: BookingRow[] }>(`/admin/users/${id}`).then((r) => r.data),

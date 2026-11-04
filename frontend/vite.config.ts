@@ -41,7 +41,10 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         runtimeCaching: [
           {
-            urlPattern: ({ url }) => url.pathname.startsWith('/api/media/'),
+            // Only pictures shown through <img> tags, which carry no sign-in: these are the public vehicle photos. Private files
+            // (licenses, trip photos) are loaded with the sign-in token, are never put in this shared cache, and are kept by the
+            // browser's own HTTP cache for the signed-in user only.
+            urlPattern: ({ url, request }) => request.destination === 'image' && url.pathname.startsWith('/api/media/'),
             handler: 'CacheFirst',
             options: { cacheName: 'vehicle-photos', expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 14 } },
           },

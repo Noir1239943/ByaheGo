@@ -13,7 +13,8 @@ export function NotificationBell({ className }: { className?: string }) {
   const { unread, refresh } = useAuth()
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const { data = [], refetch } = useQuery({ queryKey: ['notifications'], queryFn: accountService.notifications, staleTime: 30000 })
+  const { data = [], refetch } = useQuery({ queryKey: ['notifications'], queryFn: accountService.notifications, enabled: false })
+  // The list is only fetched when the bell is opened (the badge number already comes with /me), not on every page.
 
   return (
     <Dropdown

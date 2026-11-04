@@ -15,7 +15,7 @@ import { TripTimeline } from '@/components/features/bookings/TripTimeline'
 import { Alert, Avatar, Button, Card, CardBody, CardHeader, Checkbox, Input, Modal, Select, Textarea } from '@/components/ui'
 import { getErrorMessage, getFieldErrors } from '@/lib/api'
 import { downloadFile } from '@/lib/download'
-import { INSPECTION_ITEMS } from '@/lib/constants'
+import { INSPECTION_ITEMS, STALE } from '@/lib/constants'
 import { formatDate, formatDateTime, localToIso, peso, toLocalInput } from '@/lib/format'
 import { hostService } from '@/services/host'
 import { tripService } from '@/services/trip'
@@ -30,7 +30,7 @@ type InspectionForm = { odometer: string; fuel_level: string; checklist: Record<
 export function HostBookingDetailSection() {
   const { reference = '' } = useParams()
   const qc = useQueryClient()
-  const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['host', 'booking', reference], queryFn: () => hostService.booking(reference) })
+  const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['host', 'booking', reference], queryFn: () => hostService.booking(reference), staleTime: STALE.live })
   const [modal, setModal] = useState<null | 'pickup' | 'return' | 'incident' | 'cancel' | 'review' | 'issue' | 'photo' | 'notreturned' | 'confirm'>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const blank = (): InspectionForm => ({

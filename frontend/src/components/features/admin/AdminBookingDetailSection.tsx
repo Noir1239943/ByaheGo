@@ -21,6 +21,7 @@ import { downloadFile } from '@/lib/download'
 import { formatDate, formatDateTime, peso, timeAgo } from '@/lib/format'
 import { adminService } from '@/services/admin'
 import type { UserBrief } from '@/types'
+import { STALE } from '@/lib/constants'
 
 function PersonCard({ title, u, extra }: { title: string; u: UserBrief | null; extra?: string }) {
   if (!u) return null
@@ -42,7 +43,7 @@ function PersonCard({ title, u, extra }: { title: string; u: UserBrief | null; e
 export function AdminBookingDetailSection() {
   const { reference = '' } = useParams()
   const qc = useQueryClient()
-  const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['admin', 'booking', reference], queryFn: () => adminService.booking(reference) })
+  const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['admin', 'booking', reference], queryFn: () => adminService.booking(reference), staleTime: STALE.live })
   const [modal, setModal] = useState<null | 'refund' | 'cancel' | 'message' | 'flag'>(null)
   const [refund, setRefund] = useState({ amount: '', reason: '' })
   const [cancel, setCancel] = useState({ reason: '', refund: true })
