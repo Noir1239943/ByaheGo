@@ -11,8 +11,8 @@ php artisan config:clear
 # Create/update tables in Neon.
 php artisan migrate --force
 
-# Fills an EMPTY database with demo data (accounts, vehicles, trips) on the first deploy only.
-# After that the data lives in Neon and this step does nothing. Delete this line to skip demo data.
+# Demo data (accounts, vehicles, trips) is created only when SEED_DEMO_DATA=true, with the password from DEMO_PASSWORD, and only
+# into a database that has none yet. Without that switch this step creates nothing (or just the ADMIN_EMAIL admin, if set).
 php artisan db:seed --force
 
 php artisan config:cache

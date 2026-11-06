@@ -43,8 +43,13 @@ class AppServiceProvider extends ServiceProvider
         Model::preventLazyLoading(! $this->app->isProduction());
 
         // 5 login attempts per minute for the same account name + IP, with a message people can act on.
-        RateLimiter::for('login', fn (Request $request) => Limit::perMinute(5)->by(strtolower((string) $request->input('login')).'|'.$request->ip())
-            ->response(fn (Request $r, array $headers) => $this->tooMany('Too many login attempts', $headers, 'login')));
+        // And 20 per minute from one address whatever the account name, so one machine can't try many accounts.
+        RateLimiter::for('login', fn (Request $request) => [
+            Limit::perMinute(5)->by(strtolower((string) $request->input('login')).'|'.$request->ip())
+                ->response(fn (Request $r, array $headers) => $this->tooMany('Too many login attempts', $headers, 'login')),
+            Limit::perMinute(20)->by('login-ip|'.$request->ip())
+                ->response(fn (Request $r, array $headers) => $this->tooMany('Too many login attempts', $headers, 'login')),
+        ]);
         RateLimiter::for('password-reset', fn (Request $request) => Limit::perMinute(5)->by($request->ip())
             ->response(fn (Request $r, array $headers) => $this->tooMany('Too many requests', $headers, 'email')));
 

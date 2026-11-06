@@ -13,13 +13,18 @@ ByaheGo/
 
 ## Demo accounts
 
-| Role | Username | Password | What to try |
-|---|---|---|---|
-| **Admin** | `Admin` | `Password123` | Overview, ID verifications, listings, disputes, refunds, payouts, users |
-| **Renter** | `Test123` | `Password123` | Book, pay, cancel, receipts, reviews, saved vehicles, apply to host |
-| Host (extra) | `Host123` | `Password123` | Host dashboard, handover & return checks, late fees, add a vehicle |
+The repository is public, so **no password is published here**. Ask the team for demo access.
 
-You can also log in with the email (e.g. `test123@byahego.test`). Other seeded renters/hosts use the same password.
+| Role | Username | What to try |
+|---|---|---|
+| **Admin** | `Admin` | Overview, ID verifications, listings, disputes, refunds, payouts, users |
+| **Renter** | `Test123` | Book, pay, cancel, receipts, reviews, saved vehicles, apply to host |
+| Host (extra) | `Host123` | Host dashboard, handover & return checks, late fees, add a vehicle |
+
+You can also log in with the email (e.g. `test123@byahego.test`). All demo accounts share one password.
+
+- **On your own computer** `php artisan migrate:fresh --seed` creates the demo data and **prints a made-up password** (or set `DEMO_PASSWORD` in `backend/.env` to choose it). Fix an already seeded database with `php artisan demo:set-password`.
+- **On a live site demo data is off.** Turn it on only for a presentation with `SEED_DEMO_DATA=true` and a `DEMO_PASSWORD` of 12+ characters in Render's environment (never in the repo). Seeding only fills a database that has no demo data yet and never resets anything.
 
 **Test payments** run on Xendit's test mode (no real money). At checkout you are sent to Xendit's page: for GCash or Maya press **Proceed to Pay** on the test wallet page; for a card use `4000 0000 0000 1000` (expiry `12/30`, any CVC, any name). See *Payments (Xendit)* below.
 
@@ -93,7 +98,7 @@ cd backend
 composer install
 cp .env.example .env                    # then paste your Neon DIRECT connection string into DB_URL
 php artisan key:generate
-php artisan migrate:fresh --seed        # creates the schema and all demo data in Neon (takes a few minutes over the network)
+php artisan migrate:fresh --seed        # creates the schema and all demo data in Neon (takes a few minutes over the network); prints the demo password
 php artisan serve                       # http://localhost:8000
 
 # 2) Website (new terminal)
@@ -206,6 +211,19 @@ Checkout uses **Xendit's hosted payment page** (Payment Sessions). Card and wall
 
 ---
 
+## Security
+
+The code is public, so everything below is configuration, not secrecy.
+
+- **Secrets** live only in the host's environment (`backend/.env` locally, ignored by git). The history was scanned with gitleaks: nothing sensitive was ever committed.
+- **Demo accounts** are off on a live site unless you opt in (see *Demo accounts*); there is no published password.
+- **CORS** allows only the origins in `CORS_ALLOWED_ORIGINS`; a `*` is dropped in production. Sign-ins expire (`SANCTUM_TOKEN_EXPIRATION`). Logging in is limited per account and per address; registration, payments, uploads and the Xendit webhook are rate-limited too, and the webhook needs the callback token.
+- **Headers.** The API sends `nosniff`, no-framing, `no-referrer` and HSTS. The website's Content-Security-Policy is written into `index.html` at build time (`vite.config.ts`) and `vercel.json` adds the frame/form/object rules and the other headers. It allows only our own files, the API (set `VITE_API_URL` when building), OpenStreetMap tiles and address search, Google Fonts, and WebAssembly and workers for the face check and OCR. Tested in a real browser: map, face check and OCR, camera, Google sign-in redirect, Xendit redirect and return, service worker and install, PDFs and photos. If you add a new outside service, add its address to that policy.
+- **Access.** Every `admin/*` route needs the admin role and every `host/*` route a host; renters, hosts and admins only get their own bookings, and ID documents and trip photos only go to the right people.
+- Run `composer audit` and `npm audit` now and then.
+
+---
+
 ## Speed (local development against Neon)
 
 Neon is in Singapore, so every database query from a laptop in Cebu is a network round trip (about 150 ms), and opening a fresh connection costs about a second. The app is built around that:
@@ -267,14 +285,18 @@ You can push this folder as **one GitHub repo** (Render uses `backend/`, Vercel 
 | `APP_URL` | your Render URL, e.g. `https://byahego-api.onrender.com` |
 | `DB_CONNECTION` | `pgsql` |
 | `DB_URL` | the Neon connection string |
-| `CORS_ALLOWED_ORIGINS` | your Vercel URL (or `*` while testing) |
+| `CORS_ALLOWED_ORIGINS` | your Vercel URL. `*` is ignored on a live site (nothing else is allowed in) |
+| `LOG_LEVEL` | `warning` |
+| `SANCTUM_TOKEN_EXPIRATION` | `43200` (minutes: a sign-in lasts 30 days) |
+| `SEED_DEMO_DATA` / `DEMO_PASSWORD` | `false` normally; `true` + a 12+ character password only for a presentation |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | optional real admin (password 12+ characters) |
 | `LOG_CHANNEL` | `stderr` |
 | `SESSION_DRIVER` / `CACHE_STORE` | `array` / `file` |
 | `FRONTEND_URL` | your Vercel URL (OAuth return + password-reset links) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | optional (see below) |
 | `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | optional (see below) |
 
-3. Deploy. On start the container runs `migrate --force` and `db:seed --force`. **The seeder only fills an empty database**, so the demo data is created once in Neon on the first deploy and is never reset afterwards – from then on your data lives in Neon. (To skip demo data, delete the `db:seed` line in `backend/docker/start.sh`.)
+3. Deploy. On start the container runs `migrate --force` and `db:seed --force`. **Demo data is off unless `SEED_DEMO_DATA=true`** (then `DEMO_PASSWORD`, 12+ characters, is required) and it is only created in a database that has none, never reset. To have a real admin without demo data, set `ADMIN_EMAIL` and `ADMIN_PASSWORD` (12+ characters); the account is created once.
 4. Check `https://<your-api>.onrender.com/api/health` → `{"ok":true}`.
 
 *Tip:* the free Render plan sleeps after 15 minutes; the first request after that takes ~50 seconds. Open the API URL a minute before presenting.

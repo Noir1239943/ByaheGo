@@ -21,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'active' => \App\Http\Middleware\EnsureActive::class,
         ]);
         $middleware->trustProxies(at: '*');
+        $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
         $middleware->prepend(\App\Http\Middleware\PerfLog::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

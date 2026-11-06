@@ -58,6 +58,13 @@ return [
     // Measure every API request (time + query count) into storage/logs/perf.log. For tuning only.
     'perf_log' => env('PERF_LOG', false) === 'sql' ? 'sql' : filter_var(env('PERF_LOG', false), FILTER_VALIDATE_BOOLEAN),
 
+    // Demo data (see App\Support\DemoData). Off on a live site unless SEED_DEMO_DATA=true; the password comes from DEMO_PASSWORD only.
+    'seed_demo_data' => filter_var(env('SEED_DEMO_DATA', false), FILTER_VALIDATE_BOOLEAN),
+    'demo_password' => env('DEMO_PASSWORD'),
+    // Optional real administrator for a live site that has no demo data: both values must be set in the host's environment.
+    'admin_email' => env('ADMIN_EMAIL'),
+    'admin_password' => env('ADMIN_PASSWORD'),
+
     'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
 
     // Shown to blocked people as the place to appeal.

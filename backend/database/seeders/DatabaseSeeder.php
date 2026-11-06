@@ -23,6 +23,7 @@ use App\Models\Vehicle;
 use App\Services\PricingService;
 use App\Services\VerificationChecker;
 use App\Services\VerificationDecider;
+use App\Support\DemoData;
 use App\Support\Settings;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
@@ -31,7 +32,8 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Populates a fresh database with demo data (accounts, Cebu vehicles, trips, payments).
- * Safe to run on every deploy: it does nothing if the admin account already exists.
+ * Safe to run on every deploy: it never touches existing data and does nothing if the demo admin already exists.
+ * On a live site (APP_ENV=production) demo data is only created when SEED_DEMO_DATA=true, with the password from DEMO_PASSWORD.
  */
 class DatabaseSeeder extends Seeder
 {
@@ -42,12 +44,20 @@ class DatabaseSeeder extends Seeder
     protected array $hubs = [];
     protected array $users = [];
 
+    /** The password of every demo account for this run. */
+    protected string $password = '';
+
     public function run(): void
     {
-        if (User::where('username', 'Admin')->exists()) {
-            $this->command?->info('Database already has data – skipping seed.');
+        if (! DemoData::allowed()) {
+            $this->seedAdminOnly();
             return;
         }
+        if (User::where('username', 'Admin')->exists()) {
+            $this->command?->info('Database already has demo data – skipping seed.');
+            return;
+        }
+        [$this->password, $generated] = DemoData::password();
         Model::unguard();
         mt_srand(2026);
         DB::transaction(function () {
@@ -62,6 +72,28 @@ class DatabaseSeeder extends Seeder
         });
         Model::reguard();
         Settings::flush();
+        if ($generated) {
+            $this->command?->warn("Demo accounts were created. Their password is: {$this->password}  (set DEMO_PASSWORD in .env to choose your own)");
+        }
+    }
+
+    /** A live site without demo data: creates one real admin from ADMIN_EMAIL and ADMIN_PASSWORD, if both are set and nobody has that email. */
+    protected function seedAdminOnly(): void
+    {
+        $email = strtolower(trim((string) config('app.admin_email')));
+        $password = (string) config('app.admin_password');
+        if ($email === '' || $password === '') {
+            $this->command?->info('Demo data is off (SEED_DEMO_DATA is not true). No accounts were created.');
+            return;
+        }
+        DemoData::assertStrong($password, 'ADMIN_PASSWORD');
+        if (User::where('email', $email)->exists()) {
+            $this->command?->info('The administrator already exists.');
+            return;
+        }
+        (new User)->forceFill(['name' => 'ByaheGo Admin', 'username' => 'siteadmin', 'email' => $email, 'password' => $password, 'role' => 'admin',
+            'is_super_admin' => true, 'verification_status' => 'verified', 'email_verified_at' => now()])->save();
+        $this->command?->info("Administrator {$email} created.");
     }
 
     protected function user(string $username, string $name, string $role = 'renter', array $extra = []): User
@@ -72,7 +104,7 @@ class DatabaseSeeder extends Seeder
             'name' => $name,
             'username' => $username,
             'email' => $email,
-            'password' => 'Password123',
+            'password' => $this->password,
             'role' => $role,
             'verification_status' => 'verified',
             'email_verified_at' => now(),
@@ -82,7 +114,7 @@ class DatabaseSeeder extends Seeder
 
     protected function seedUsers(): void
     {
-        $this->user('Admin', 'Martin Kyle Obidas', 'admin', ['email' => 'admin@byahego.test', 'phone' => '0917 000 0001', 'city' => 'Cordova', 'is_super_admin' => true]);
+        $this->user('Admin', 'ByaheGo Admin', 'admin', ['email' => 'admin@byahego.test', 'phone' => '0917 000 0001', 'city' => 'Cordova', 'is_super_admin' => true]);
         $this->user('Test123', 'Vincent Laroco', 'renter', ['email' => 'test123@byahego.test', 'phone' => '0917 123 4567', 'city' => 'Lapu-Lapu City']);
 
         $payout = fn ($method, $name, $no) => ['payout_method' => $method, 'payout_account_name' => $name, 'payout_account_number' => $no];

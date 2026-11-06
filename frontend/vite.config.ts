@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // Xendit only sends people back to https addresses, so when a local certificate exists (see README, "Payments") the dev
@@ -10,9 +10,40 @@ import { VitePWA } from 'vite-plugin-pwa'
 const certDir = fileURLToPath(new URL('./.cert', import.meta.url))
 const https = existsSync(`${certDir}/localhost.pem`) ? { key: readFileSync(`${certDir}/localhost-key.pem`), cert: readFileSync(`${certDir}/localhost.pem`) } : undefined
 
-export default defineConfig({
+/**
+ * The website's Content-Security-Policy, written into index.html when building (the dev server needs inline scripts for hot reload, so
+ * it has none). It only lets the page talk to itself, our API, OpenStreetMap (map tiles and address search) and Google Fonts, and it
+ * allows WebAssembly and web workers for the face check and OCR. Frame, form and object rules that a <meta> tag can't carry are in
+ * vercel.json. Set VITE_API_URL at build time so the API's address is included.
+ */
+function contentSecurityPolicy(apiUrl: string): Plugin {
+  const api = new URL(apiUrl).origin
+  const policy = [
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    `img-src 'self' data: blob: https://*.tile.openstreetmap.org ${api}`,
+    // data: and blob: are the app's own in-browser images (photos are resized and read back from memory); they can't reach any server.
+    `connect-src 'self' data: blob: ${api} https://nominatim.openstreetmap.org`,
+    "worker-src 'self' blob:",
+    "media-src 'self' blob:",
+    "manifest-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join('; ')
+  return {
+    name: 'byahego-csp',
+    apply: 'build',
+    transformIndexHtml: () => [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: policy }, injectTo: 'head-prepend' }],
+  }
+}
+
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
+    contentSecurityPolicy(loadEnv(mode, process.cwd(), '').VITE_API_URL ?? 'http://localhost:8000'),
     tailwindcss(),
     VitePWA({
       registerType: 'prompt', // a new version waits until the person taps "Refresh" (see PwaStatus)
@@ -59,4 +90,4 @@ export default defineConfig({
     },
   },
   server: { port: 5173, https },
-})
+}))
