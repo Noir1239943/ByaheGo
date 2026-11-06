@@ -57,7 +57,7 @@ export const RESTRICTION_CODES = [
 
 export const PAYOUT_LABELS: Record<string, string> = { gcash: 'GCash', maya: 'Maya', bank: 'Bank transfer' }
 
-export const SUPPORT_EMAIL = '@byahego.ph'
+export const SUPPORT_EMAIL = 'support@byahego.ph'
 export const SUPPORT_PHONE = '(032) 888 2924'
 
 export const PAYMENT_TYPE_LABEL: Record<string, string> = {
