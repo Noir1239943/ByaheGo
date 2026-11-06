@@ -70,7 +70,7 @@ export default defineConfig(({ mode }) => ({
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
-        globIgnores: ['models/**', 'tesseract/**'], // big face / OCR files are fetched on demand, not precached
+        globIgnores: ['models/**', 'tesseract/**', 'og-image.png'], // big face / OCR files are fetched on demand, not precached
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         runtimeCaching: [
           // No rule for /api/*: API answers, documents and photos are never stored by the service worker (they are
