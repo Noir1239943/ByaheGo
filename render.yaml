@@ -6,6 +6,7 @@ services:
     runtime: docker
     rootDir: backend
     plan: free
+    region: singapore   # same region as the Neon database (ap-southeast-1), so each query is a few ms, not ~150 ms
     healthCheckPath: /api/health
     envVars:
       - key: APP_NAME
