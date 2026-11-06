@@ -22,7 +22,7 @@ export function PriceBreakdown({ q, className, showDeposit = true, totalLabel = 
       {!!q.weekly_discount && <Row label="Weekly rate savings" value={`−${peso(q.weekly_discount)}`} valueClass="text-success" />}
       {q.driver_fee_total > 0 && <Row label="Driver fee" value={peso(q.driver_fee_total)} />}
       <Row label={q.protection_name ?? 'Protection'} value={q.protection_total > 0 ? peso(q.protection_total) : 'Included'} valueClass={q.protection_total > 0 ? undefined : 'text-success font-semibold'} />
-      <Row label="Service fee" value={peso(q.service_fee)} hint="Covers 24/7 roadside help and customer support." />
+      <Row label="Service fee" value={peso(q.service_fee)} hint="Covers secure payments, ID verification and support through the help center." />
       <div className="flex items-center justify-between border-t border-line-200 pt-3 text-base font-bold text-ink-900">
         <span>{totalLabel}</span>
         <span>{peso(q.total)}</span>

@@ -24,3 +24,11 @@ backend/storage/*.key
 *.log
 .phpunit.result.cache
 .phpunit.cache/
+
+# Test coverage, keys and certificates
+coverage/
+.nyc_output/
+*.pem
+*.key
+*.p12
+*.pfx

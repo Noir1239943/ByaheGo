@@ -70,3 +70,20 @@
   body { background: #fff; }
   @page { margin: 14mm; }
 }
+
+/* Touch targets: on phones every button, tab, select and text box is at least 44 px tall and wide, whatever size the design
+   gives it on a desktop. :where() keeps this rule weaker than any utility class, and min-height wins over a smaller height. */
+@media (max-width: 640px) {
+  :where(button, [role='button'], [role='tab'], select, input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='hidden'])):not(label input, [data-small-target]) {
+    min-height: 44px;
+  }
+  :where(button, [role='button'], [role='tab']):not([data-small-target]) {
+    min-width: 44px;
+  }
+  /* Links that act as buttons or sit in menus, headers and footers. */
+  :where(footer a, nav a, a[class*='inline-flex']):not([data-small-target]) {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}

@@ -49,7 +49,7 @@ const LIVE = {
   gesture: { enabled: true },
 } as unknown as Partial<Config>
 
-export function loadHuman(): Promise<Human> {
+function loadHuman(): Promise<Human> {
   if (!instance) {
     instance = (async () => {
       const { Human: HumanLib } = await import('@vladmandic/human')
@@ -80,7 +80,7 @@ export interface DetectedFace {
 
 const toBox = (f: FaceResult): FaceBox => ({ x: f.boxRaw[0], y: f.boxRaw[1], w: f.boxRaw[2], h: f.boxRaw[3] })
 
-export function toDetected(f: FaceResult): DetectedFace {
+function toDetected(f: FaceResult): DetectedFace {
   const box = toBox(f)
   return { box, area: box.w * box.h, score: f.faceScore || f.boxScore || f.score || 0, embedding: f.embedding?.length ? f.embedding : null, real: f.real ?? null, live: f.live ?? null }
 }

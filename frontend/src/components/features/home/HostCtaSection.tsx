@@ -10,7 +10,7 @@ export function HostCtaSection() {
           <div>
             <p className="text-xs font-bold tracking-[0.14em] text-accent uppercase">For vehicle owners</p>
             <h2 className="mt-2 text-3xl font-extrabold tracking-tight sm:text-4xl">Earn from your idle vehicle</h2>
-            <p className="mt-3 max-w-md text-white/80">List your car, van or motorcycle for free. You set the price and schedule, and every trip is covered by host protection.</p>
+            <p className="mt-3 max-w-md text-white/80">List your car, van or motorcycle for free. You set the price and schedule, and every trip is backed by ByaheGo's damage policy and a held security deposit.</p>
             <div className="mt-6 flex flex-wrap gap-3">
               <Button variant="accent" to="/account/host-application">
                 List your vehicle

@@ -18,11 +18,12 @@ export const FEATURE_OPTIONS = [
 ]
 
 export const PAYMENT_METHODS: { value: PaymentMethod; label: string; hint: string; badge?: string }[] = [
-  { value: 'gcash', label: 'GCash', hint: 'Pay instantly from your GCash wallet', badge: 'Most popular' },
-  { value: 'maya', label: 'Maya', hint: 'Pay with your Maya account' },
-  { value: 'card', label: 'Credit or debit card', hint: 'Visa, Mastercard and JCB accepted' },
-  { value: 'google_pay', label: 'Google Pay', hint: 'Fast checkout with your saved Google card' },
-  { value: 'apple_pay', label: 'Apple Pay', hint: 'Pay with Face ID or Touch ID' },
+  { value: 'gcash', label: 'GCash', hint: 'Approve the payment in your GCash app', badge: 'Most popular' },
+  { value: 'maya', label: 'Maya', hint: 'Approve the payment in your Maya app' },
+  { value: 'card', label: 'Credit or debit card', hint: 'Visa, Mastercard and JCB, typed on a secure page' },
+  { value: 'qrph', label: 'QR Ph', hint: 'Scan with any bank or e-wallet app' },
+  { value: 'grabpay', label: 'GrabPay', hint: 'Pay with your GrabPay wallet' },
+  { value: 'shopeepay', label: 'ShopeePay', hint: 'Pay with your ShopeePay wallet' },
 ]
 
 export const INSPECTION_ITEMS: { key: string; label: string }[] = [
@@ -62,7 +63,25 @@ export const SUPPORT_PHONE = '(032) 888 2924'
 export const PAYMENT_TYPE_LABEL: Record<string, string> = {
   charge: 'Payment',
   balance: 'Balance payment',
+  extension: 'Extra time (extension)',
   refund: 'Refund',
   late_fee: 'Late return fee',
   damage: 'Damage charge',
+  cancellation_fee: 'Cancellation fee',
 }
+
+/**
+ * How long fetched data counts as fresh (React Query `staleTime`). Within this time, opening a page again shows what it
+ * already has instead of asking the server; after a change the app invalidates the affected queries itself, so these only
+ * set how often a page that was left alone is refreshed.
+ */
+export const STALE = {
+  /** Almost never changes: hubs, sign-in options, headline numbers. */
+  static: 10 * 60_000,
+  /** Public browsing: search results, a car's page, reviews. */
+  browse: 60_000,
+  /** Lists in the account, host and admin areas. */
+  list: 45_000,
+  /** One trip or booking, where the other side may have just acted (a host answering, a payment landing). */
+  live: 10_000,
+} as const

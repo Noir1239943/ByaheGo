@@ -97,6 +97,12 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
+            // Shown in the database's session list, so these connections can be told apart from others.
+            'application_name' => env('DB_APPLICATION_NAME'),
+            // Keep the connection open between requests (PHP's persistent PDO). Opening a fresh TLS connection to a far-away
+            // Neon region costs about a second, so this is worth turning on for local development (DB_PERSISTENT=true).
+            // Off by default: a hosted Apache runs many workers and each would hold one Neon connection.
+            'options' => array_filter([PDO::ATTR_PERSISTENT => filter_var(env('DB_PERSISTENT', false), FILTER_VALIDATE_BOOLEAN) ?: null]),
         ],
 
         'sqlsrv' => [

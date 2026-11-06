@@ -119,14 +119,14 @@ export function VehicleDetailSection() {
                     </li>
                   )
                 })}
-                <li className="flex items-center gap-3 text-sm text-ink-700"><ShieldCheck className="size-4.5 text-brand" /> Standard protection & 24/7 roadside help</li>
+                <li className="flex items-center gap-3 text-sm text-ink-700"><ShieldCheck className="size-4.5 text-brand" /> Damage policy included: your share is capped by your plan</li>
               </ul>
             </div>
           )}
 
           <div>
             <h2 className="text-xl font-bold">Where you'll pick it up</h2>
-            <p className="mt-1 text-sm text-ink-500">{v.pickup.type === 'hub' ? 'A staffed ByaheGo hub – easy to find, with parking.' : 'Your host meets you here. The exact spot is shared after booking.'}</p>
+            <p className="mt-1 text-sm text-ink-500">{v.pickup.type === 'hub' ? 'A staffed ByaheGo hub – easy to find, with parking.' : `Your host meets you in ${v.pickup.area ?? v.pickup.city ?? 'this area'}. The map shows the general area; the exact spot is shared once your booking is confirmed.`}</p>
             <div className="mt-4 grid gap-4 md:grid-cols-[1fr_260px]">
               <div className="h-64 overflow-hidden rounded-2xl border border-line-200">
                 <Suspense fallback={<Skeleton className="h-full w-full" />}>
@@ -163,7 +163,7 @@ export function VehicleDetailSection() {
           <ReviewsBlock v={v} />
         </div>
 
-        <aside className="lg:sticky lg:top-24 lg:self-start">
+        <aside id="booking" className="scroll-mt-20 lg:sticky lg:top-24 lg:self-start">
           <BookingWidget vehicle={v} />
           <p className="mt-3 rounded-2xl bg-accent-soft p-4 text-xs text-ink-700">
             A refundable {peso(v.security_deposit)} security deposit is held with your payment and released within {v.policies.deposit_release_days} days of return.
@@ -177,6 +177,14 @@ export function VehicleDetailSection() {
           <span className="text-sm text-ink-500">/day</span>
         </p>
         <Button onClick={() => document.getElementById('book')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>Check availability</Button>
+      </div>
+      {/* Phones: the price and the Book button stay in reach while the page scrolls. */}
+      <div className="no-print fixed inset-x-0 bottom-0 z-[800] flex items-center justify-between gap-3 border-t border-line-200 bg-white px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-pop lg:hidden">
+        <div>
+          <p className="text-lg leading-tight font-extrabold">{peso(v.daily_rate)}<span className="text-sm font-medium text-ink-500"> / day</span></p>
+          <p className="text-xs text-ink-500">Choose dates to see the total</p>
+        </div>
+        <Button size="lg" onClick={() => document.getElementById('booking')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Book</Button>
       </div>
     </section>
   )

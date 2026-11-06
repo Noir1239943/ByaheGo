@@ -1,8 +1,51 @@
 import { useEffect, useState } from 'react'
-import { Checkbox, Chip, Input, Segmented } from '@/components/ui'
+import { LocateFixed, X } from 'lucide-react'
+import { toast } from 'sonner'
+import { Checkbox, Chip, Input, Segmented, Select } from '@/components/ui'
 import { useDebounce } from '@/hooks/useDebounce'
+import { useGeolocation } from '@/hooks/useGeolocation'
+import { CEBU_AREAS, RADIUS_OPTIONS } from '@/lib/areas'
 import { VEHICLE_TYPES } from '@/lib/constants'
 import { useVehicleSearch } from './useVehicleSearch'
+
+/** "Use my location" or pick an area, then limit results to a radius around it. */
+function NearFilter() {
+  const { get, set } = useVehicleSearch()
+  const geo = useGeolocation()
+  const near = !!get('lat') && !!get('lng')
+  const around = (lat: number, lng: number, place: string) => set({ lat: lat.toFixed(5), lng: lng.toFixed(5), place, radius: get('radius') || 10, sort: 'nearest' })
+  const clear = () => set({ lat: null, lng: null, place: null, radius: null, sort: get('sort') === 'nearest' ? null : get('sort') })
+
+  return (
+    <div>
+      <p className="mb-2 text-sm font-semibold">Near</p>
+      {near ? (
+        <div className="space-y-2 rounded-xl bg-brand-tint p-3">
+          <div className="flex items-start justify-between gap-2 text-sm">
+            <span className="font-semibold text-brand-dark">{get('place') || 'Chosen spot'}</span>
+            <button onClick={clear} aria-label="Stop searching near here" className="text-ink-500 hover:text-ink-900"><X className="size-4" /></button>
+          </div>
+          <Select aria-label="Search radius" value={get('radius') || '10'} onChange={(e) => set({ radius: e.target.value })} options={RADIUS_OPTIONS.map((r) => ({ value: String(r), label: `Within ${r} km` }))} className="h-9 rounded-lg text-sm" />
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <button
+            disabled={geo.loading}
+            onClick={async () => {
+              const c = await geo.request()
+              if (c) around(c.lat, c.lng, 'My location')
+              else toast.error('Allow location access, or choose an area below.')
+            }}
+            className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-line-200 text-sm font-semibold hover:bg-brand-tint disabled:opacity-60"
+          >
+            <LocateFixed className="size-4 text-brand" /> {geo.loading ? 'Finding you…' : 'Use my location'}
+          </button>
+          <Select aria-label="Choose an area" value="" placeholder="Or choose an area…" onChange={(e) => { const a = CEBU_AREAS.find((x) => x.label === e.target.value); if (a) around(a.lat, a.lng, a.label) }} options={CEBU_AREAS.map((a) => ({ value: a.label, label: a.label }))} className="h-10 rounded-xl text-sm" />
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function FiltersPanel({ facets }: { facets?: Record<string, number> }) {
   const { get, set, clearFilters, activeCount } = useVehicleSearch()
@@ -32,6 +75,8 @@ export function FiltersPanel({ facets }: { facets?: Record<string, number> }) {
           </button>
         )}
       </div>
+
+      <NearFilter />
 
       <div>
         <p className="mb-2 text-sm font-semibold">Rental type</p>

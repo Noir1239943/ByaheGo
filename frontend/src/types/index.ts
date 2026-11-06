@@ -1,7 +1,7 @@
 export type Role = 'renter' | 'host' | 'admin'
-export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'rejected'
+type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'rejected'
 export type VehicleType = 'sedan' | 'hatchback' | 'suv' | 'mpv' | 'van' | 'pickup' | 'motorcycle'
-export type PaymentMethod = 'gcash' | 'maya' | 'card' | 'google_pay' | 'apple_pay'
+export type PaymentMethod = 'gcash' | 'maya' | 'card' | 'qrph' | 'grabpay' | 'shopeepay'
 export type RentalType = 'self' | 'driver'
 export type ProtectionKey = 'standard' | 'plus' | 'premium'
 
@@ -13,7 +13,7 @@ export interface UserBrief {
   phone: string | null
   initials: string
   role: Role
-  status: 'active' | 'suspended'
+  status: 'active' | 'suspended' | 'revoked'
   verification_status: VerificationStatus
   joined_at: string | null
 }
@@ -22,12 +22,16 @@ export interface User extends UserBrief {
   city: string | null
   is_admin: boolean
   is_super_admin?: boolean
+  host_cancellations?: number
   is_host: boolean
   suspended_reason: string | null
+  suspended_until?: string | null
+  revoked_at?: string | null
   notify_email: boolean
   notify_sms: boolean
   has_password: boolean
   google_linked: boolean
+  facebook_linked?: boolean
   payout: { method: 'gcash' | 'maya' | 'bank'; account_name: string; account_masked: string } | null
   host_application_status: 'pending' | 'approved' | 'rejected' | null
   last_login_at: string | null
@@ -61,6 +65,9 @@ export interface VehicleCard {
   rating_count: number
   trips_count: number
   city: string | null
+  /** Barangay or hub name – the only place name shown before booking. */
+  area?: string | null
+  pickup_type?: 'hub' | 'own'
   location_label: string
   instant_book: boolean
   with_driver_available: boolean
@@ -80,7 +87,7 @@ export interface VehicleCard {
   is_available?: boolean
 }
 
-export interface ProtectionPlan {
+interface ProtectionPlan {
   key: ProtectionKey
   name: string
   price_per_day: number
@@ -100,13 +107,18 @@ export interface VehicleDetail extends VehicleCard {
   description: string | null
   features: string[]
   photos: string[]
+  /** Smaller copies of `photos` (same order) for the gallery tiles; the full size opens in the viewer. */
+  photo_thumbs: string[]
   weekly_rate: number | null
   security_deposit: number
   late_fee_per_hour: number
   delivery_fee: number
   min_days: number
+  grace_minutes: number
+  late_terms: { grace_minutes: number; per_hour: number; full_day_after_hours: number; daily_rate: number }
+  fuel_policy: 'same_level' | 'full_to_full'
   status: string
-  pickup: { type: 'hub' | 'own'; label: string; hub: Hub | null; address: string | null; city: string | null }
+  pickup: { type: 'hub' | 'own'; label: string; hub: Hub | null; address: string | null; city: string | null; area: string | null; approximate: boolean }
   host: { id: number; name: string; initials: string; joined_at: string | null; trips: number; verified: boolean; vehicles: number }
   policies: {
     cancellation_cutoff_hours: number
@@ -129,8 +141,15 @@ export interface HostVehicle extends Omit<VehicleDetail, 'is_favorite' | 'review
   pickup_type: 'hub' | 'own'
   hub_id: number | null
   pickup_address: string | null
+  /** The exact pin. Only the host ever receives this. */
+  pin_lat: number | null
+  pin_lng: number | null
   or_media_id: number | null
   cr_media_id: number | null
+  ctpl_media_id: number | null
+  ctpl_expiry: string | null
+  grace_minutes: number
+  fuel_policy: 'same_level' | 'full_to_full'
   photo_ids: number[]
   submitted_at: string | null
   approved_at: string | null
@@ -157,32 +176,50 @@ export interface Quote {
   total: number
   security_deposit: number
   due_now: number
+  cancellation_fee: number
   free_cancellation_until: string
   available: boolean
 }
 
 export interface Payment {
   id: number
-  type: 'charge' | 'refund' | 'late_fee' | 'damage' | 'balance'
+  type: 'charge' | 'refund' | 'late_fee' | 'damage' | 'balance' | 'extension' | 'cancellation_fee'
   method: PaymentMethod | 'deposit'
   method_label: string
   amount: number
+  /** pending | succeeded | failed | expired */
   status: string
   receipt_no: string
   gateway_ref: string | null
   account_hint: string | null
   description: string
+  reason: string | null
+  failure_reason: string | null
+  paid_at: string | null
+  /** The real invoice (or refund receipt) number, once one has been issued. */
+  invoice_no: string | null
+  invoice_kind: 'invoice' | 'refund_receipt' | null
+  /** Admin only. */
+  provider?: string | null
+  provider_payment_id?: string | null
+  provider_refund_id?: string | null
+  provider_session_id?: string | null
+  attempts?: number
+  requested_by?: string | null
   created_at: string
   booking_reference: string | null
   vehicle_name: string | null
   user: UserBrief | null
 }
 
-export type BookingStatus = 'confirmed' | 'active' | 'completed' | 'cancelled'
-export type DisplayStatus = 'upcoming' | 'active' | 'completed' | 'cancelled' | 'under_review'
+type BookingStatus = 'pending' | 'confirmed' | 'active' | 'completed' | 'cancelled'
+type DisplayStatus = 'pending' | 'upcoming' | 'active' | 'completed' | 'cancelled' | 'under_review'
 
 export interface BookingRow {
   id: number
+  /** Admin views only: set when the renter or host was blocked and the trip needs a decision. */
+  admin_flag?: 'renter_blocked' | 'host_blocked' | 'possible_theft' | null
+  admin_flag_note?: string | null
   reference: string
   status: BookingStatus
   display_status: DisplayStatus
@@ -215,6 +252,78 @@ export interface Inspection {
   created_at: string
 }
 
+export type ShotAngle = 'front' | 'rear' | 'driver_side' | 'passenger_side' | 'dashboard' | 'back_seats' | 'trunk' | 'engine' | 'odometer' | 'fuel'
+
+export interface TripPhoto {
+  id: number
+  media_id: number
+  angle: ShotAngle | 'damage' | 'host_extra'
+  label: string
+  live: boolean
+  device_time: string | null
+  server_time: string | null
+  lat: number | null
+  lng: number | null
+  note: string | null
+  sha256: string
+  uploader_role: 'renter' | 'host'
+}
+
+/** A submitted check-in or check-out (the renter's guided photos). */
+export interface TripInspection {
+  id: number
+  stage: 'checkin' | 'checkout'
+  odometer: number
+  fuel_level: number
+  notes: string | null
+  submitted_at: string
+  host_status: 'pending' | 'confirmed' | 'auto_accepted' | null
+  host_notes: string | null
+  host_responded_at: string | null
+  host_window_ends_at: string | null
+  photos: TripPhoto[]
+}
+
+/** pending = the host decides; awaiting_payment = approved, the renter must pay before the original return time; approved = paid and applied; lapsed = not paid in time. */
+interface TripExtension {
+  id: number
+  status: 'pending' | 'awaiting_payment' | 'approved' | 'declined' | 'lapsed'
+  requested_return_at: string
+  previous_return_at: string
+  note: string | null
+  responded_at: string | null
+  amount: number
+  hours: number
+  /** True while the host hasn't decided: the price is what it would cost. */
+  is_estimate: boolean
+  pay_by: string | null
+  /** The Xendit page for the renter (renter view only). */
+  checkout_url: string | null
+}
+
+export interface TripInfo {
+  checkin: TripInspection | null
+  checkout: TripInspection | null
+  can_checkin: boolean
+  checkin_opens_at: string | null
+  can_checkout: boolean
+  checkout_submitted_at: string | null
+  host_review_due_at: string | null
+  late: { hours: number; fee: number; grace_minutes: number; per_hour: number; extra_day_applied: boolean; full_day_after_hours: number; is_overdue: boolean }
+  extension: TripExtension | null
+  can_request_extension: boolean
+  overdue_hours: number
+  can_report_not_returned: boolean
+  not_returned_after_hours: number
+}
+
+export interface DamagePin {
+  angle: string
+  x: number
+  y: number
+  note?: string
+}
+
 export interface BookingIncident {
   id: number
   type: string
@@ -225,6 +334,7 @@ export interface BookingIncident {
   resolution_notes: string | null
   created_at: string
   reporter_role: 'host' | 'renter' | 'admin'
+  pins?: DamagePin[]
 }
 
 export interface Booking extends Omit<BookingRow, 'vehicle' | 'has_open_incident'> {
@@ -246,7 +356,9 @@ export interface Booking extends Omit<BookingRow, 'vehicle' | 'has_open_incident
   driver: { name: string; phone: string | null; email: string | null; license_no: string | null }
   payment_method: PaymentMethod
   payment_method_label: string
-  agreement: { version: string | null; accepted_at: string | null }
+  agreement: { version: string | null; accepted_at: string | null; has_copy: boolean; signer_name: string | null; hash: string | null; text: string | null }
+  cancellation_fee: number
+  cancellation_fee_if_cancelled: number
   cancelled_at: string | null
   cancelled_by: string | null
   cancel_reason: string | null
@@ -254,9 +366,13 @@ export interface Booking extends Omit<BookingRow, 'vehicle' | 'has_open_incident
   review: Review | null
   vehicle: VehicleCard
   payments: Payment[]
+  /** Xendit's payment page for an unpaid booking (renter only). */
+  checkout_url: string | null
+  pay_by: string | null
   inspections: Inspection[]
   incidents: BookingIncident[]
   invoice_no: string
+  trip: TripInfo
   commission?: number
   payout?: { amount: number; status: string; paid_at: string | null; scheduled_for: string | null } | null
   admin_note?: string | null
@@ -265,9 +381,31 @@ export interface Booking extends Omit<BookingRow, 'vehicle' | 'has_open_incident
   events?: { type: string; message: string; actor: string; created_at: string }[]
 }
 
-export type CheckResult = 'pass' | 'warn' | 'fail' | 'not_checked'
+/** Why a blocked person can't sign in, until when, and where to appeal. */
+export interface BlockInfo {
+  type: 'suspended' | 'revoked'
+  reason: string | null
+  until: string | null
+  appeal_email: string
+  appeal_url: string
+}
 
-export interface AutoCheck {
+export interface AuditLogEntry {
+  id: number
+  action: string
+  actor: string | null
+  target_type: string | null
+  target_id: number | null
+  target_label: string | null
+  reason: string | null
+  meta: Record<string, unknown> | null
+  ip: string | null
+  created_at: string
+}
+
+type CheckResult = 'pass' | 'warn' | 'fail' | 'not_checked'
+
+interface AutoCheck {
   key: string
   label: string
   result: CheckResult
@@ -285,7 +423,7 @@ export interface FaceBoxReport {
 }
 
 /** What the renter's browser reported about the photos. Not proof, only supports the admin's decision. */
-export interface ClientChecksReport {
+interface ClientChecksReport {
   face_similarity: number | null
   liveness: number | null
   antispoof: number | null
@@ -298,7 +436,7 @@ export interface ClientChecksReport {
 export type AutoLabel = 'reject' | 'incomplete' | 'check' | 'good'
 
 /** One audit-log entry: an automatic decision or a super-admin override. */
-export interface VerificationDecisionLog {
+interface VerificationDecisionLog {
   id: number
   event: 'auto_decision' | 'override'
   outcome: 'approve' | 'reject' | 'review'
@@ -354,6 +492,7 @@ export interface HostApplication {
   payout_method: 'gcash' | 'maya' | 'bank'
   payout_account_name: string
   payout_account_masked: string
+  payout_bank?: string | null
   notes: string | null
   status: 'pending' | 'approved' | 'rejected'
   admin_notes: string | null
@@ -395,6 +534,9 @@ export interface Incident {
   status: 'open' | 'resolved' | 'dismissed'
   resolution_notes: string | null
   photo_ids: number[]
+  pins: DamagePin[]
+  lat: number | null
+  lng: number | null
   reporter: UserBrief | null
   reporter_role: 'host' | 'renter' | 'admin'
   created_at: string

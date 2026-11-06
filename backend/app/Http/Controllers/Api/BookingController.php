@@ -6,11 +6,19 @@ use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Incident;
 use App\Models\Vehicle;
+use App\Services\AgreementService;
 use App\Services\BookingService;
+use App\Models\Payment;
+use App\Services\InvoiceService;
+use App\Services\PaymentGatewayException;
+use App\Services\PaymentService;
+use App\Services\PricingService;
 use App\Services\PaymentGateway;
 use App\Support\Notifier;
 use App\Support\Present;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rule;
 
 class BookingController extends Controller
@@ -25,18 +33,19 @@ class BookingController extends Controller
     public function index(Request $request)
     {
         $tab = $request->input('tab', 'upcoming');
-        $q = Booking::with(['vehicle.hub', 'vehicle.photos', 'host', 'review', 'incidents'])->where('renter_id', $request->user()->id);
+        $q = Booking::withRowFlags()->where('renter_id', $request->user()->id);
         match ($tab) {
             'active' => $q->where('status', 'active')->orderBy('return_at'),
             'past' => $q->where('status', 'completed')->orderByDesc('return_at'),
             'cancelled' => $q->where('status', 'cancelled')->orderByDesc('cancelled_at'),
-            default => $q->where('status', 'confirmed')->orderBy('pickup_at'),
+            default => $q->whereIn('status', ['confirmed', 'pending'])->orderBy('pickup_at'),
         };
         $counts = Booking::where('renter_id', $request->user()->id)->selectRaw('status, COUNT(*) as total')->groupBy('status')->pluck('total', 'status');
+        $rows = $q->get()->each(fn ($b) => $b->setRelation('renter', $request->user()));
         return response()->json([
-            'data' => $q->get()->map(fn ($b) => Present::bookingRow($b))->values(),
+            'data' => Present::bookingRows($rows),
             'counts' => [
-                'upcoming' => (int) ($counts['confirmed'] ?? 0),
+                'upcoming' => (int) ($counts['confirmed'] ?? 0) + (int) ($counts['pending'] ?? 0),
                 'active' => (int) ($counts['active'] ?? 0),
                 'past' => (int) ($counts['completed'] ?? 0),
                 'cancelled' => (int) ($counts['cancelled'] ?? 0),
@@ -56,21 +65,47 @@ class BookingController extends Controller
             'driver_phone' => ['required', 'string', 'max:20'],
             'driver_email' => ['required', 'email'],
             'payment_method' => ['required', Rule::in(array_keys(PaymentGateway::METHODS))],
-            'wallet_number' => ['nullable', 'string', 'max:20'],
-            'card_number' => ['nullable', 'string', 'max:25'],
-            'card_expiry' => ['nullable', 'string', 'max:7'],
-            'card_cvc' => ['nullable', 'string', 'max:4'],
-            'card_name' => ['nullable', 'string', 'max:80'],
             'agree_terms' => ['accepted'],
+            'agreement_read_to_end' => ['accepted'],
+            'signature_name' => ['required', 'string', 'max:120'],
+            'agreement_hash' => ['required', 'string', 'size:64'],
             'confirm_age' => ['accepted_if:rental_type,self'],
         ], [
             'agree_terms.accepted' => 'Please read and accept the rental agreement to continue.',
+            'agreement_read_to_end.accepted' => 'Please scroll to the end of the rental agreement before you sign.',
+            'signature_name.required' => 'Type your full name to sign the agreement.',
             'confirm_age.accepted_if' => 'Please confirm you\'re at least 21 and have a valid license.',
             'driver_phone.required' => 'Please add a mobile number so your host can reach you.',
         ]);
         $vehicle = Vehicle::with(['hub', 'host'])->findOrFail($data['vehicle_id']);
-        $booking = $this->bookings->create($request->user()->load('latestLicense'), $vehicle, $data, $request->ip());
+        $booking = $this->bookings->create($request->user()->load('latestLicense'), $vehicle, $data, $request->ip(), $request->userAgent());
         return response()->json(Present::booking($booking->fresh()), 201);
+    }
+
+    /** The agreement filled in for this trip, shown before payment. Nothing is stored until the booking is made. */
+    public function agreementPreview(Request $request, int $id, PricingService $pricing, AgreementService $agreements)
+    {
+        $data = $request->validate([
+            'pickup_at' => ['required', 'date'],
+            'return_at' => ['required', 'date'],
+            'rental_type' => ['required', Rule::in(['self', 'driver'])],
+            'protection_plan' => ['required', Rule::in(['standard', 'plus', 'premium'])],
+        ]);
+        $vehicle = Vehicle::with(['hub', 'host'])->findOrFail($id);
+        $user = $request->user()->load('latestLicense');
+        if ($data['rental_type'] === 'self' && ! $user->isVerified()) {
+            throw ValidationException::withMessages(['verification' => 'Please verify your driver\'s license before booking a self-drive trip.']);
+        }
+        $pickup = Carbon::parse($data['pickup_at']);
+        $return = Carbon::parse($data['return_at']);
+        $quote = $pricing->quote($vehicle, $pickup, $return, $data['rental_type'], $data['protection_plan']);
+        $built = $agreements->build($vehicle, $user, $quote, $pickup, $return, $data['rental_type']);
+        return response()->json($built + ['free_cancellation_until' => $quote['free_cancellation_until']]);
+    }
+
+    public function agreementPdf(Request $request, string $reference, AgreementService $agreements)
+    {
+        return $agreements->download($this->own($request, $reference));
     }
 
     public function show(Request $request, string $reference)
@@ -87,13 +122,40 @@ class BookingController extends Controller
 
     public function payBalance(Request $request, string $reference)
     {
-        $data = $request->validate([
-            'payment_method' => ['required', Rule::in(array_keys(PaymentGateway::METHODS))],
-            'wallet_number' => ['nullable', 'string'], 'card_number' => ['nullable', 'string'],
-            'card_expiry' => ['nullable', 'string'], 'card_cvc' => ['nullable', 'string'],
-        ]);
-        $booking = $this->bookings->payBalance($this->own($request, $reference), $data);
+        $data = $request->validate(['payment_method' => ['required', Rule::in(array_keys(PaymentGateway::METHODS))]]);
+        $payment = $this->bookings->payBalance($this->own($request, $reference), $data['payment_method']);
+        return response()->json(['checkout_url' => $payment->checkout_url]);
+    }
+
+    /**
+     * The renter lands here after Xendit's page (and the page also calls it while it waits). We ask Xendit directly,
+     * so it works on localhost where webhooks can't reach us.
+     */
+    public function verifyPayment(Request $request, string $reference, PaymentService $payments)
+    {
+        $booking = $payments->verifyBooking($this->own($request, $reference));
         return response()->json(Present::booking($booking));
+    }
+
+    /** Back to the payment page for an unpaid booking (a fresh page is opened if the old one ran out). */
+    public function pay(Request $request, string $reference, PaymentService $payments)
+    {
+        $data = $request->validate(['payment_method' => ['nullable', Rule::in(array_keys(PaymentGateway::METHODS))]]);
+        try {
+            $payment = $payments->resume($this->own($request, $reference), $data['payment_method'] ?? null);
+        } catch (PaymentGatewayException) {
+            throw ValidationException::withMessages(['payment' => 'We couldn\'t open the payment page just now. Nothing was charged. Please try again in a moment.']);
+        }
+        $booking = $this->own($request, $reference);
+        return response()->json(['checkout_url' => $payment->status === 'pending' ? $payment->checkout_url : null, 'booking' => Present::booking($booking)]);
+    }
+
+    public function invoicePdf(Request $request, int $id, InvoiceService $invoices)
+    {
+        $payment = Payment::where('id', $id)->where('user_id', $request->user()->id)->firstOrFail();
+        $invoice = $invoices->issueFor($payment);
+        abort_if(! $invoice, 404, 'There is no invoice for this payment yet.');
+        return $invoices->download($invoice);
     }
 
     public function review(Request $request, string $reference)
@@ -120,14 +182,21 @@ class BookingController extends Controller
             return response()->json(['message' => 'You can report a problem during or after your trip.'], 422);
         }
         $data = $request->validate([
-            'type' => ['required', Rule::in(['accident', 'breakdown', 'damage', 'other'])],
+            'type' => ['required', Rule::in(['accident', 'breakdown', 'damage', 'stolen', 'other'])],
             'description' => ['required', 'string', 'min:10', 'max:2000'],
-            'photo_ids' => ['nullable', 'array'],
+            'photo_ids' => ['nullable', 'array', 'max:12'],
+            'photo_ids.*' => ['integer'],
+            'lat' => ['nullable', 'numeric', 'between:-90,90'],
+            'lng' => ['nullable', 'numeric', 'between:-180,180'],
         ], ['description.min' => 'Please tell us a bit more about what happened.']);
+        // Photos must be the renter's own uploads.
+        $data['photo_ids'] = \App\Models\Media::whereIn('id', $data['photo_ids'] ?? [])->where('user_id', $request->user()->id)->pluck('id')->all();
         Incident::create($data + ['booking_id' => $booking->id, 'reporter_id' => $request->user()->id]);
-        $booking->log('incident', 'Renter reported: '.$data['type'].'.', $request->user()->id);
-        Notifier::admins('Renter reported a problem', "Booking {$booking->reference}: {$data['type']}.", '/admin/disputes', 'warning');
-        Notifier::send($booking->host_id, 'Your renter reported a problem', "Booking {$booking->reference}: {$data['type']}. Our team is on it.", "/host/bookings/{$booking->reference}", 'warning');
+        $urgent = in_array($data['type'], ['stolen', 'accident'], true);
+        $label = $data['type'] === 'stolen' ? 'car stolen while renting' : $data['type'];
+        $booking->log('incident', 'Renter reported: '.$label.'.', $request->user()->id);
+        Notifier::admins($urgent ? 'URGENT: renter reported '.$label : 'Renter reported a problem', "Booking {$booking->reference}: {$label}.", '/admin/disputes', $urgent ? 'danger' : 'warning');
+        Notifier::send($booking->host_id, $urgent ? 'URGENT: your renter reported '.$label : 'Your renter reported a problem', "Booking {$booking->reference}: {$label}. Our team is on it.", "/host/bookings/{$booking->reference}", $urgent ? 'danger' : 'warning');
         return response()->json(Present::booking($booking->fresh()), 201);
     }
 }

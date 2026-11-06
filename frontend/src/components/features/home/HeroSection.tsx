@@ -2,11 +2,12 @@ import { useQuery } from '@tanstack/react-query'
 import { BadgeCheck, Check, Star, Zap } from 'lucide-react'
 import { SearchForm } from '@/components/common/SearchBar'
 import { VehicleArt } from '@/components/common/VehicleArt'
+import { STALE } from '@/lib/constants'
 import { peso } from '@/lib/format'
 import { vehicleService } from '@/services/vehicles'
 
 export function HeroSection() {
-  const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: vehicleService.stats, staleTime: 300000 })
+  const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: vehicleService.stats, staleTime: STALE.static })
   return (
     <section className="relative overflow-hidden bg-hero text-white">
       <div className="pointer-events-none absolute -right-20 bottom-0 size-[420px] rounded-full bg-accent/25 blur-3xl" />
@@ -23,7 +24,7 @@ export function HeroSection() {
             Cars, SUVs, vans and motorcycles from trusted local hosts. Compare prices, book in minutes, and pick up near you.
           </p>
           <ul className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-sm text-white/85">
-            {['Free cancellation up to a day before', 'Protection included', '24/7 roadside help'].map((t) => (
+            {['Free cancellation up to a day before', 'Damage policy included', 'Report problems in the app'].map((t) => (
               <li key={t} className="flex items-center gap-1.5">
                 <Check className="size-4 text-accent" strokeWidth={3} /> {t}
               </li>

@@ -22,11 +22,6 @@ export function formatDateTime(iso: string | null | undefined) {
   return `${d.toLocaleDateString(PH, { weekday: 'short', month: 'short', day: 'numeric' })} · ${d.toLocaleTimeString(PH, { hour: 'numeric', minute: '2-digit' })}`
 }
 
-export function formatTime(iso: string | null | undefined) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleTimeString(PH, { hour: 'numeric', minute: '2-digit' })
-}
-
 export function formatRange(from: string, to: string) {
   const a = new Date(from)
   const b = new Date(to)

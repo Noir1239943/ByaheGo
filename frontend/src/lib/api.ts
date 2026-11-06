@@ -32,7 +32,7 @@ api.interceptors.response.use(
   (error: AxiosError<{ code?: string }>) => {
     const status = error.response?.status
     const code = error.response?.data?.code
-    if (status === 401 || code === 'account_suspended') {
+    if (status === 401 || code === 'account_blocked') {
       if (tokenStore.get()) {
         tokenStore.clear()
         window.dispatchEvent(new CustomEvent('byahego:signed-out', { detail: { code } }))
@@ -66,6 +66,15 @@ export function getFieldErrors(error: unknown): Record<string, string> {
   return {}
 }
 
-export function mediaUrl(id: number | null | undefined) {
-  return id ? `${API_URL}/api/media/${id}` : null
+/** `width` asks for a smaller copy, so thumbnails and grids don't download full-size originals. */
+export function mediaUrl(id: number | null | undefined, width?: number) {
+  return id ? `${API_URL}/api/media/${id}${width ? `?w=${width}` : ''}` : null
+}
+
+/** If a request failed because the account is suspended or revoked, the details to show (reason, end date, how to appeal). */
+export function getBlockInfo(error: unknown): import('@/types').BlockInfo | null {
+  if (axios.isAxiosError<{ code?: string; block?: import('@/types').BlockInfo }>(error) && error.response?.status === 403 && error.response.data?.code === 'account_blocked') {
+    return error.response.data.block ?? null
+  }
+  return null
 }

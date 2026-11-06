@@ -2,87 +2,143 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Str;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 /**
- * Payment gateway in test mode. It behaves like an e-wallet / card processor (GCash, Maya, cards,
- * Google Pay, Apple Pay) without moving real money, so the full checkout, receipt and refund flows work.
- * Swap this class for a live provider (e.g. PayMongo) when you have merchant keys.
+ * Xendit, using hosted checkout (Payment Sessions) and the v3 Refunds API. Card and wallet details are typed on
+ * Xendit's own page and never touch this server. Amounts are whole pesos, which is also what Xendit expects for PHP.
+ *
+ * Google Pay is not offered yet: Xendit supports it in the Philippines, but it needs Google Pay enabled on our Xendit account and a
+ * Google merchant ID, which our test setup doesn't have. Apple Pay is not offered. Neither is faked.
  */
 class PaymentGateway
 {
+    /** What the renter picks at checkout => the label shown everywhere. */
     public const METHODS = [
         'gcash' => 'GCash',
         'maya' => 'Maya',
         'card' => 'Credit or debit card',
-        'google_pay' => 'Google Pay',
-        'apple_pay' => 'Apple Pay',
+        'qrph' => 'QR Ph',
+        'grabpay' => 'GrabPay',
+        'shopeepay' => 'ShopeePay',
     ];
 
-    /** Test cards that simulate a decline. */
-    public const DECLINED_CARDS = ['4000000000000002', '4000000000009995'];
+    /** Our method => Xendit's channel code (verified against the live API). */
+    public const CHANNELS = [
+        'gcash' => 'GCASH',
+        'maya' => 'PAYMAYA',
+        'card' => 'CARDS',
+        'qrph' => 'QRPH',
+        'grabpay' => 'GRABPAY',
+        'shopeepay' => 'SHOPEEPAY',
+    ];
 
-    public function charge(string $method, int $amount, array $details): array
+    /** Labels for older records made before the Xendit switch. */
+    private const OLD = ['google_pay' => 'Google Pay', 'apple_pay' => 'Apple Pay', 'deposit' => 'Security deposit'];
+
+    public static function label(?string $method): string
     {
-        if (! array_key_exists($method, self::METHODS)) {
-            throw ValidationException::withMessages(['payment_method' => 'Please choose a payment method.']);
-        }
-        $hint = null;
-        if ($method === 'card') {
-            $number = preg_replace('/\D/', '', (string) ($details['card_number'] ?? ''));
-            $exp = (string) ($details['card_expiry'] ?? '');
-            $cvc = preg_replace('/\D/', '', (string) ($details['card_cvc'] ?? ''));
-            if (strlen($number) < 13 || strlen($number) > 19 || ! $this->luhn($number)) {
-                throw ValidationException::withMessages(['card_number' => 'That card number doesn\'t look right. Please check it and try again.']);
-            }
-            if (! preg_match('/^(0[1-9]|1[0-2])\s*\/\s*(\d{2})$/', $exp, $m) || (2000 + (int) $m[2]) * 100 + (int) $m[1] < (int) now()->format('Ym')) {
-                throw ValidationException::withMessages(['card_expiry' => 'Please enter a valid expiry date (MM/YY).']);
-            }
-            if (strlen($cvc) < 3) {
-                throw ValidationException::withMessages(['card_cvc' => 'Please enter the 3-digit security code.']);
-            }
-            if (in_array($number, self::DECLINED_CARDS, true)) {
-                throw ValidationException::withMessages(['card_number' => 'Your bank declined this payment. Try another card or pay with GCash or Maya.']);
-            }
-            $hint = '•••• '.substr($number, -4);
-        } elseif (in_array($method, ['gcash', 'maya'], true)) {
-            $phone = preg_replace('/\D/', '', (string) ($details['wallet_number'] ?? ''));
-            if (! preg_match('/^(09\d{9}|639\d{9})$/', $phone)) {
-                throw ValidationException::withMessages(['wallet_number' => 'Enter the 11-digit mobile number linked to your '.self::METHODS[$method].' account (e.g. 0917 123 4567).']);
-            }
-            $hint = substr($phone, -11, 4).' ••• '.substr($phone, -4);
-        } else {
-            $hint = self::METHODS[$method];
-        }
-
-        return [
-            'status' => 'succeeded',
-            'gateway_ref' => strtoupper(Str::random(4)).'-'.now()->format('ymdHis').'-'.random_int(100, 999),
-            'account_hint' => $hint,
-            'amount' => $amount,
-        ];
+        return self::METHODS[$method] ?? self::OLD[$method] ?? ($method ?: '');
     }
 
-    public function refund(string $method, int $amount): array
+    public function configured(): bool
     {
-        return [
-            'status' => 'succeeded',
-            'gateway_ref' => 'RF-'.strtoupper(Str::random(6)).'-'.now()->format('ymdHis'),
-            'amount' => $amount,
-        ];
+        return (string) config('services.xendit.secret') !== '';
     }
 
-    protected function luhn(string $number): bool
+    /** @return array{id:string,url:string,expires_at:?string} */
+    public function createSession(string $referenceId, int $amount, string $description, string $method, string $successUrl, string $cancelUrl): array
     {
-        $sum = 0;
-        $alt = false;
-        for ($i = strlen($number) - 1; $i >= 0; $i--) {
-            $n = (int) $number[$i];
-            if ($alt) { $n *= 2; if ($n > 9) $n -= 9; }
-            $sum += $n;
-            $alt = ! $alt;
+        $r = $this->call(fn (PendingRequest $h) => $h->post('/sessions', [
+            'reference_id' => $referenceId,
+            'session_type' => 'PAY',
+            'mode' => 'PAYMENT_LINK',
+            'amount' => $amount,
+            'currency' => 'PHP',
+            'country' => 'PH',
+            'description' => mb_substr($description, 0, 200),
+            'allowed_payment_channels' => [self::CHANNELS[$method]],
+            'locale' => 'en',
+            'success_return_url' => $successUrl,
+            'cancel_return_url' => $cancelUrl,
+        ]));
+        return ['id' => $r['payment_session_id'], 'url' => $r['payment_link_url'], 'expires_at' => $r['expires_at'] ?? null];
+    }
+
+    /** @return array{id:string,status:string,payment_id:?string,url:?string} status is paid | pending | expired | canceled */
+    public function retrieveSession(string $sessionId): array
+    {
+        $r = $this->call(fn (PendingRequest $h) => $h->get('/sessions/'.$sessionId));
+        $status = match (strtoupper((string) ($r['status'] ?? ''))) {
+            'COMPLETED' => 'paid',
+            'EXPIRED' => 'expired',
+            'CANCELED', 'CANCELLED' => 'canceled',
+            default => 'pending',
+        };
+        // A completed session without a payment id is not trusted as paid: we need the id to refund it later.
+        if ($status === 'paid' && empty($r['payment_id'])) $status = 'pending';
+        return ['id' => $sessionId, 'status' => $status, 'payment_id' => $r['payment_id'] ?? null, 'url' => $r['payment_link_url'] ?? null];
+    }
+
+    public function cancelSession(string $sessionId): void
+    {
+        try {
+            $this->call(fn (PendingRequest $h) => $h->post('/sessions/'.$sessionId.'/cancel'));
+        } catch (PaymentGatewayException) {
+            // The hold on our side is what matters; an already finished session can't be cancelled and that is fine.
         }
-        return $sum % 10 === 0;
+    }
+
+    /**
+     * Partial refunds are supported. Xendit answers PENDING first and finishes later (webhook, or we ask again).
+     *
+     * @return array{id:string,status:string,failure:?string} status is pending | succeeded | failed
+     */
+    public function refund(string $paymentId, int $amount, string $referenceId, string $reason = 'OTHERS'): array
+    {
+        $r = $this->call(fn (PendingRequest $h) => $h->withHeaders(['api-version' => '2024-11-11'])->post('/v3/refunds', [
+            'reference_id' => $referenceId,
+            'payment_id' => $paymentId,
+            'amount' => $amount,
+            'reason' => $reason,
+        ]));
+        return $this->refundResult($r);
+    }
+
+    public function retrieveRefund(string $refundId): array
+    {
+        return $this->refundResult($this->call(fn (PendingRequest $h) => $h->withHeaders(['api-version' => '2024-11-11'])->get('/v3/refunds/'.$refundId)));
+    }
+
+    protected function refundResult(array $r): array
+    {
+        $status = match (strtoupper((string) ($r['status'] ?? ''))) {
+            'SUCCEEDED' => 'succeeded',
+            'FAILED' => 'failed',
+            default => 'pending',
+        };
+        return ['id' => $r['refund_id'] ?? $r['id'] ?? '', 'status' => $status, 'failure' => $r['failure_code'] ?? null];
+    }
+
+    protected function call(callable $fn): array
+    {
+        if (! $this->configured()) throw new PaymentGatewayException('Online payments are not set up yet.');
+        try {
+            /** @var Response $res */
+            $http = Http::baseUrl(rtrim((string) config('services.xendit.base_url'), '/'))->withBasicAuth((string) config('services.xendit.secret'), '')->acceptJson()->asJson()->timeout(25);
+            if ($bundle = config('services.xendit.ca_bundle')) $http = $http->withOptions(['verify' => $bundle]);
+            $res = $fn($http);
+        } catch (\Throwable $e) {
+            Log::warning('Xendit connection problem: '.$e->getMessage());
+            throw new PaymentGatewayException('We could not reach the payment provider. Please try again.', previous: $e);
+        }
+        if (! $res->successful()) {
+            // Xendit's message is logged for us; the renter only sees a safe, plain sentence.
+            throw new PaymentGatewayException((string) ($res->json('message') ?: 'The payment provider refused the request.'), (string) $res->json('error_code'), $res->status());
+        }
+        return (array) $res->json();
     }
 }

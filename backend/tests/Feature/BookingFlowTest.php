@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Booking;
+use App\Models\Incident;
 use App\Models\Payment;
 use App\Models\Payout;
 use Tests\TestCase;
@@ -29,7 +30,9 @@ class BookingFlowTest extends TestCase
             ->assertJsonPath('deposit_status', 'held')
             ->assertJsonPath('can_cancel', true);
         $this->assertMatchesRegularExpression('/^BG-\d+$/', $res->json('reference'));
-        $this->assertSame('0917 ••• 4567', $res->json('payments.0.account_hint'));
+        $this->assertSame('GCash', $res->json('payments.0.account_hint'));
+        $this->assertSame('succeeded', $res->json('payments.0.status'));
+        $this->assertMatchesRegularExpression('/^BYG-\d{4}-\d{6}$/', $res->json('payments.0.invoice_no'));
         $this->assertStringStartsWith('OR-', $res->json('payments.0.receipt_no'));
         $this->assertNotNull($res->json('agreement.accepted_at'));
     }
@@ -47,18 +50,13 @@ class BookingFlowTest extends TestCase
         ])->assertStatus(422)->assertJsonValidationErrors('pickup_at');
     }
 
-    public function test_cannot_book_own_vehicle_and_declined_card(): void
+    public function test_cannot_book_own_vehicle(): void
     {
         $host = $this->host();
         $host->update(['verification_status' => 'verified']);
         $v = $this->vehicle([], $host);
         $this->book($host, $v)->assertStatus(422)->assertJsonValidationErrors('vehicle');
-        $u = $this->verifiedRenter();
-        $this->book($u, $v, ['payment_method' => 'card', 'card_number' => '4000 0000 0000 0002', 'card_expiry' => '12/30', 'card_cvc' => '123'])
-            ->assertStatus(422)->assertJsonValidationErrors('card_number');
         $this->assertDatabaseCount('bookings', 0);
-        $this->book($u, $v, ['payment_method' => 'card', 'card_number' => '4242 4242 4242 4242', 'card_expiry' => '12/30', 'card_cvc' => '123'])
-            ->assertCreated()->assertJsonPath('payments.0.account_hint', '•••• 4242');
     }
 
     public function test_cancel_a_day_before_gets_full_refund(): void
@@ -93,13 +91,16 @@ class BookingFlowTest extends TestCase
         $u = $this->verifiedRenter();
         $ref = $this->book($u, $v)->json('reference');
         $b = Booking::where('reference', $ref)->first();
-        // The trip started two days ago and was due back 3 hours ago.
-        $b->update(['pickup_at' => now()->subDays(2)->subHours(3), 'return_at' => now()->subHours(3)]);
+        // The trip started two days ago and was due back just under 3 hours ago (the photo upload takes a few seconds, so leave some slack).
+        $b->update(['pickup_at' => now()->subDays(2)->subHours(3), 'return_at' => now()->subHours(3)->addMinutes(5)]);
 
         $check = ['exterior' => true, 'interior' => true, 'tires' => true, 'engine_bay' => true];
         $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 12000, 'fuel_level' => 100, 'checklist' => $check])
+            ->assertStatus(422); // no check-in photos yet
+        $this->inspect($u, $ref, 'checkin')->assertCreated();
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 12000, 'fuel_level' => 100, 'checklist' => $check])
             ->assertOk()->assertJsonPath('status', 'active');
-        // Returned now: 3 hours late (grace period is 60 minutes).
+        // Returned now: 3 hours late (grace period is 30 minutes).
         $actual = now()->toIso8601String();
         $this->as($host)->postJson("/api/host/bookings/{$ref}/return", ['odometer' => 1, 'fuel_level' => 90, 'checklist' => $check, 'actual_return_at' => now()->addDay()->toIso8601String()])
             ->assertStatus(422)->assertJsonValidationErrors('actual_return_at');
@@ -125,6 +126,7 @@ class BookingFlowTest extends TestCase
         $ref = $this->book($u, $v)->json('reference');
         Booking::where('reference', $ref)->update(['pickup_at' => now()->subHour(), 'return_at' => now()->addDay()]);
         $check = ['exterior' => true];
+        $this->inspect($u, $ref, 'checkin')->assertCreated();
         $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 100, 'fuel_level' => 100, 'checklist' => $check])->assertOk();
         $this->as($host)->postJson("/api/host/bookings/{$ref}/return", [
             'odometer' => 300, 'fuel_level' => 100, 'checklist' => ['exterior' => false], 'damage_reported' => true,
@@ -141,8 +143,46 @@ class BookingFlowTest extends TestCase
         $this->assertSame(2000, $b->balance_due); // 7,000 − 5,000 deposit
         $this->assertSame('balance_due', $b->payment_status);
 
-        $this->as($u)->postJson("/api/bookings/{$ref}/pay-balance", ['payment_method' => 'maya', 'wallet_number' => '09181112222'])
-            ->assertOk()->assertJsonPath('balance_due', 0)->assertJsonPath('payment_status', 'paid');
+        // Paying the balance opens a Xendit page; it is cleared only once Xendit reports it paid.
+        $this->xendit['session_status'] = 'ACTIVE';
+        $url = $this->as($u)->postJson("/api/bookings/{$ref}/pay-balance", ['payment_method' => 'maya'])->assertOk()->json('checkout_url');
+        $this->assertStringStartsWith('https://pay.test/', $url);
+        $this->payBooking($u, $ref)->assertOk()->assertJsonPath('balance_due', 2000)->assertJsonPath('payment_status', 'balance_due');
+        $this->xendit['session_status'] = 'COMPLETED';
+        $this->payBooking($u, $ref)->assertOk()->assertJsonPath('balance_due', 0)->assertJsonPath('payment_status', 'paid');
+    }
+
+    /** The agreement promises the renter never pays more than the plan's limit for accidental damage, so the app must enforce it. */
+    public function test_accidental_damage_is_capped_by_the_protection_plan_but_theft_is_not(): void
+    {
+        $host = $this->host();
+        $u = $this->verifiedRenter();
+        $admin = $this->admin();
+        $n = 0;
+        $started = function (string $plan) use ($host, $u, &$n) {
+            $n++;
+            $res = $this->book($u, $this->vehicle(['plate_number' => 'CAP'.$n], $host), ['protection_plan' => $plan, 'pickup_at' => now()->addDays(10 * $n)->setTime(10, 0)->toIso8601String(), 'return_at' => now()->addDays(10 * $n + 2)->setTime(10, 0)->toIso8601String()]);
+            $ref = $res->assertCreated()->json('reference');
+            Booking::where('reference', $ref)->update(['pickup_at' => now()->subHour(), 'return_at' => now()->addDay()]);
+            $this->inspect($u, $ref, 'checkin')->assertCreated();
+            $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 100, 'fuel_level' => 100, 'checklist' => ['exterior' => true]])->assertOk();
+            return $ref;
+        };
+
+        // Premium plan: the most the renter pays for a dent is ₱2,500.
+        $ref = $started('premium');
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/incidents", ['type' => 'damage', 'description' => 'Dent on the rear door.', 'amount_claimed' => 9000])->assertCreated();
+        $id = $this->as($admin)->getJson('/api/admin/disputes')->json('data.0.id');
+        $this->as($admin)->postJson("/api/admin/disputes/{$id}/resolve", ['action' => 'charge', 'amount' => 9000, 'notes' => 'Photos confirm it'])
+            ->assertStatus(422)->assertJsonValidationErrors('amount')->assertJsonPath('errors.amount.0', fn ($m) => str_contains($m, '₱2,500'));
+        $this->assertSame('open', Incident::find($id)->status);
+        $this->as($admin)->postJson("/api/admin/disputes/{$id}/resolve", ['action' => 'charge', 'amount' => 2500, 'notes' => 'Capped by the plan'])->assertOk()->assertJsonPath('status', 'resolved');
+
+        // Missing parts are not accidental damage: the plan does not limit them.
+        $ref = $started('standard');
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/incidents", ['type' => 'missing_parts', 'description' => 'The battery is gone.', 'amount_claimed' => 30000])->assertCreated();
+        $id = $this->as($admin)->getJson('/api/admin/disputes')->json('data.0.id');
+        $this->as($admin)->postJson("/api/admin/disputes/{$id}/resolve", ['action' => 'charge', 'amount' => 30000, 'notes' => 'Replacement cost'])->assertOk();
     }
 
     public function test_theft_report_lets_admin_suspend_renter(): void
@@ -152,6 +192,7 @@ class BookingFlowTest extends TestCase
         $u = $this->verifiedRenter();
         $ref = $this->book($u, $v)->json('reference');
         Booking::where('reference', $ref)->update(['pickup_at' => now()->subHour(), 'return_at' => now()->addDay()]);
+        $this->inspect($u, $ref, 'checkin')->assertCreated();
         $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 100, 'fuel_level' => 100, 'checklist' => ['exterior' => true]])->assertOk();
         $this->as($host)->postJson("/api/host/bookings/{$ref}/incidents", ['type' => 'theft', 'description' => 'Renter not answering, car not returned.', 'amount_claimed' => 500000])->assertCreated();
         $id = $this->as($this->admin())->getJson('/api/admin/disputes')->json('data.0.id');

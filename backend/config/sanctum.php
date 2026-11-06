@@ -50,7 +50,8 @@ return [
     |
     */
 
-    'expiration' => null,
+    // Minutes a sign-in lasts (SANCTUM_TOKEN_EXPIRATION). Empty = never expires, which is only for local development.
+    'expiration' => env('SANCTUM_TOKEN_EXPIRATION') ? (int) env('SANCTUM_TOKEN_EXPIRATION') : null,
 
     /*
     |--------------------------------------------------------------------------

@@ -1,6 +1,8 @@
 import { api } from '@/lib/api'
 import type { Booking, BookingRow, HostVehicle } from '@/types'
 
+export type BlockedDate = { id: number; starts_on: string; ends_on: string; reason: string | null }
+
 export type HostDashboard = {
   stats: { earnings_this_month: number; upcoming_bookings: number; active_trips: number; live_listings: number; total_listings: number; rating: number; reviews: number; pending_payouts: number }
   setup: { account: boolean; identity: boolean; payout: boolean; vehicle: boolean }
@@ -26,9 +28,18 @@ export const hostService = {
   pauseVehicle: (id: number) => api.post<HostVehicle>(`/host/vehicles/${id}/pause`).then((r) => r.data),
   resumeVehicle: (id: number) => api.post<HostVehicle>(`/host/vehicles/${id}/resume`).then((r) => r.data),
   deleteVehicle: (id: number) => api.delete(`/host/vehicles/${id}`),
+  blockedDates: (id: number) => api.get<{ data: BlockedDate[] }>(`/host/vehicles/${id}/blocked-dates`).then((r) => r.data.data),
+  blockDates: (id: number, body: { starts_on: string; ends_on: string; reason?: string }) => api.post<BlockedDate>(`/host/vehicles/${id}/blocked-dates`, body).then((r) => r.data),
+  unblockDates: (id: number, blockId: number) => api.delete(`/host/vehicles/${id}/blocked-dates/${blockId}`),
   bookings: (params: { tab: string; q?: string }) => api.get<{ data: BookingRow[]; counts: Record<string, number> }>('/host/bookings', { params }).then((r) => r.data),
   booking: (reference: string) => api.get<Booking>(`/host/bookings/${reference}`).then((r) => r.data),
+  cancelBooking: (reference: string, reason: string) => api.post<Booking>(`/host/bookings/${reference}/cancel`, { reason }).then((r) => r.data),
   pickup: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/pickup`, body).then((r) => r.data),
   return: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/return`, body).then((r) => r.data),
   incident: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/incidents`, body).then((r) => r.data),
+  confirmCheckin: (reference: string, notes?: string) => api.post<Booking>(`/host/bookings/${reference}/checkin/confirm`, { notes }).then((r) => r.data),
+  /** After the renter's return photos: accept (trip completes, deposit settled) or report an issue with pins. */
+  reviewReturn: (reference: string, body: Record<string, unknown>) => api.post<Booking>(`/host/bookings/${reference}/return/review`, body).then((r) => r.data),
+  respondExtension: (reference: string, id: number, approve: boolean) => api.post<Booking>(`/host/bookings/${reference}/extensions/${id}`, { approve }).then((r) => r.data),
+  notReturned: (reference: string) => api.post<Booking>(`/host/bookings/${reference}/not-returned`).then((r) => r.data),
 }

@@ -6,20 +6,69 @@ use App\Models\DriverLicense;
 use App\Models\Hub;
 use App\Models\User;
 use App\Models\Vehicle;
+use App\Services\TripService;
 use App\Support\Settings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Http\Client\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\TestResponse;
 
 abstract class TestCase extends BaseTestCase
 {
     use RefreshDatabase;
 
+    /**
+     * A stand-in for Xendit. `session_status` is what every session reports (ACTIVE = not paid yet); change it in a test
+     * to play out an unpaid, expired or paid checkout. `autopay` makes book() finish the payment like the return page does.
+     */
+    protected array $xendit = ['session_status' => 'COMPLETED', 'autopay' => true, 'refund_status' => 'SUCCEEDED', 'fail_refunds' => false, 'fail_sessions' => false, 'n' => 0, 'sessions' => [], 'refunds' => [], 'calls' => []];
+
     protected function setUp(): void
     {
         parent::setUp();
         Settings::flush();
+        config(['services.xendit.secret' => 'xnd_test_secret', 'services.xendit.callback_token' => 'cb-token', 'services.xendit.base_url' => 'https://api.xendit.co']);
+        $this->fakeXendit();
+    }
+
+    protected function fakeXendit(): void
+    {
+        Http::fake([
+            'api.xendit.co/sessions/*/cancel' => fn (Request $r) => Http::response(['status' => 'CANCELED']),
+            'api.xendit.co/sessions/*' => function (Request $r) {
+                $id = basename($r->url());
+                $session = $this->xendit['sessions'][$id] ?? null;
+                if (! $session) return Http::response(['message' => 'not found', 'error_code' => 'DATA_NOT_FOUND'], 404);
+                $status = $this->xendit['session_status'];
+                return Http::response($session + ['status' => $status] + ($status === 'COMPLETED' ? ['payment_id' => 'py-'.$id] : []));
+            },
+            'api.xendit.co/sessions' => function (Request $r) {
+                $this->xendit['calls'][] = $r->data();
+                if ($this->xendit['fail_sessions']) return Http::response(['message' => 'Channel(s) are not available', 'error_code' => 'INVALID_PAYMENT_CHANNEL'], 400);
+                $id = 'ps-test-'.(++$this->xendit['n']);
+                $this->xendit['sessions'][$id] = ['payment_session_id' => $id, 'payment_link_url' => 'https://pay.test/'.$id, 'expires_at' => now()->addMinutes(30)->toIso8601String()] + $r->data();
+                return Http::response($this->xendit['sessions'][$id]);
+            },
+            'api.xendit.co/v3/refunds/*' => function (Request $r) {
+                $id = basename($r->url());
+                return Http::response(($this->xendit['refunds'][$id] ?? []) + ['refund_id' => $id, 'status' => $this->xendit['refund_status']]);
+            },
+            'api.xendit.co/v3/refunds' => function (Request $r) {
+                $this->xendit['calls'][] = $r->data();
+                if ($this->xendit['fail_refunds']) return Http::response(['message' => 'Refund is not allowed', 'error_code' => 'REFUND_NOT_ALLOWED'], 400);
+                $id = 'rfd-test-'.(++$this->xendit['n']);
+                $this->xendit['refunds'][$id] = $r->data() + ['refund_id' => $id];
+                return Http::response($this->xendit['refunds'][$id] + ['status' => $this->xendit['refund_status']]);
+            },
+        ]);
+    }
+
+    /** Plays the renter coming back from Xendit's page after paying. */
+    protected function payBooking(User $renter, string $reference): TestResponse
+    {
+        return $this->as($renter)->postJson("/api/bookings/{$reference}/verify-payment");
     }
 
     protected function makeUser(array $attrs = []): User
@@ -93,8 +142,8 @@ abstract class TestCase extends BaseTestCase
             'driver_phone' => '09171234567',
             'driver_email' => 'vincent@example.test',
             'payment_method' => 'gcash',
-            'wallet_number' => '09171234567',
             'agree_terms' => true,
+            'agreement_read_to_end' => true,
             'confirm_age' => true,
         ], $over);
     }
@@ -106,9 +155,34 @@ abstract class TestCase extends BaseTestCase
         return $this;
     }
 
+    /** Books the way the website does: opens the agreement first, then signs the text it was shown with the verified name. */
     protected function book(User $renter, Vehicle $v, array $over = []): TestResponse
     {
-        return $this->as($renter)->postJson('/api/bookings', $this->bookingPayload($v, $over));
+        $payload = $this->bookingPayload($v, $over);
+        if (! isset($payload['signature_name'])) {
+            $preview = $this->as($renter)->postJson("/api/vehicles/{$v->id}/agreement", array_intersect_key($payload, array_flip(['pickup_at', 'return_at', 'rental_type', 'protection_plan'])));
+            // When the preview itself fails (bad dates, ...) the booking call reports the same error before it checks the signature.
+            $payload['signature_name'] = $preview->json('signer_name') ?? 'x';
+            $payload['agreement_hash'] = $preview->json('hash') ?? str_repeat('0', 64);
+        }
+        $res = $this->as($renter)->postJson('/api/bookings', $payload);
+        if ($res->getStatusCode() === 201 && $this->xendit['autopay']) {
+            $paid = $this->payBooking($renter, $res->json('reference'))->assertOk();
+            $paid->baseResponse->setStatusCode(201); // so the many tests that expect "created" keep reading naturally
+            return $paid;
+        }
+        return $res;
+    }
+
+    /** The renter does the guided photos (all ten shots) and submits the check-in or check-out. */
+    protected function inspect(User $user, string $ref, string $stage, array $over = []): TestResponse
+    {
+        foreach (array_keys(TripService::ANGLES) as $angle) {
+            $this->as($user)->post("/api/bookings/{$ref}/inspection/{$stage}/photos", [
+                'file' => $this->fakeImage($angle.'.jpg'), 'angle' => $angle, 'live' => true, 'device_time' => now()->toIso8601String(), 'lat' => 10.3157, 'lng' => 123.8854,
+            ], ['Accept' => 'application/json'])->assertCreated();
+        }
+        return $this->as($user)->postJson("/api/bookings/{$ref}/inspection/{$stage}", $over + ['odometer' => 12000, 'fuel_level' => 100]);
     }
 
     protected function fakeImage(string $name = 'photo.jpg', int $w = 1200, int $h = 800): UploadedFile

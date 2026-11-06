@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class AuthTest extends TestCase
@@ -37,30 +36,8 @@ class AuthTest extends TestCase
         $u = $this->makeUser();
         $token = $u->createToken('t')->plainTextToken;
         $u->update(['status' => 'suspended', 'suspended_reason' => 'Fraud review']);
-        $this->postJson('/api/auth/login', ['login' => $u->username, 'password' => 'Password123'])->assertStatus(422);
-        $this->withHeader('Authorization', 'Bearer '.$token)->getJson('/api/me')->assertStatus(403)->assertJsonPath('code', 'account_suspended');
-    }
-
-    public function test_google_sign_in_creates_account(): void
-    {
-        config(['services.google.client_id' => 'client-123.apps.googleusercontent.com']);
-        Http::fake(['oauth2.googleapis.com/*' => Http::response([
-            'aud' => 'client-123.apps.googleusercontent.com', 'iss' => 'https://accounts.google.com', 'sub' => 'g-999',
-            'email' => 'maria.santos@gmail.com', 'email_verified' => 'true', 'name' => 'Maria Santos',
-        ])]);
-        $this->postJson('/api/auth/google', ['credential' => 'fake-jwt'])->assertOk()->assertJsonPath('user.email', 'maria.santos@gmail.com')
-            ->assertJsonPath('user.google_linked', true);
-        // Second sign-in reuses the same account.
-        $this->postJson('/api/auth/google', ['credential' => 'fake-jwt'])->assertOk();
-        $this->assertDatabaseCount('users', 1);
-    }
-
-    public function test_google_sign_in_rejects_wrong_audience_and_missing_config(): void
-    {
-        $this->postJson('/api/auth/google', ['credential' => 'x'])->assertStatus(422);
-        config(['services.google.client_id' => 'mine']);
-        Http::fake(['oauth2.googleapis.com/*' => Http::response(['aud' => 'someone-else', 'iss' => 'accounts.google.com', 'sub' => '1', 'email' => 'a@b.c', 'email_verified' => 'true'])]);
-        $this->postJson('/api/auth/google', ['credential' => 'x'])->assertStatus(422);
+        $this->postJson('/api/auth/login', ['login' => $u->username, 'password' => 'Password123'])->assertStatus(403)->assertJsonPath('block.reason', 'Fraud review');
+        $this->withHeader('Authorization', 'Bearer '.$token)->getJson('/api/me')->assertStatus(403)->assertJsonPath('code', 'account_blocked');
     }
 
     public function test_profile_and_password_update(): void

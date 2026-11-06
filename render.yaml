@@ -21,11 +21,25 @@ services:
       - key: DB_CONNECTION
         value: pgsql
       - key: DB_URL
-        sync: false        # your Neon connection string (…?sslmode=require)
+        sync: false        # Neon DIRECT connection string (no "-pooler" in the host), ending ?sslmode=require
       - key: CORS_ALLOWED_ORIGINS
         sync: false        # your Vercel URL, e.g. https://byahego.vercel.app
       - key: LOG_CHANNEL
         value: stderr
+      - key: LOG_LEVEL
+        value: warning
+      - key: SANCTUM_TOKEN_EXPIRATION
+        value: "43200"      # minutes: a sign-in lasts 30 days
+      - key: SEED_DEMO_DATA
+        value: "false"      # true = create the demo renter, host and admin (needs DEMO_PASSWORD) into an EMPTY database
+      - key: SEED_DEMO_TRIPS
+        value: "false"      # true = also create sample trips, payments and reviews (leave false on a real site)
+      - key: DEMO_PASSWORD
+        sync: false        # at least 12 characters; only used when SEED_DEMO_DATA is true. Never put it in the repo
+      - key: ADMIN_EMAIL
+        sync: false        # optional: a real admin account created on deploy when it doesn't exist yet
+      - key: ADMIN_PASSWORD
+        sync: false        # at least 12 characters, used with ADMIN_EMAIL
       - key: SESSION_DRIVER
         value: array
       - key: CACHE_STORE
@@ -34,5 +48,17 @@ services:
         value: sync
       - key: VERIFICATION_AUTO_APPROVE
         value: "false"      # true = auto-approve clean ID submissions (auto-reject is always on)
+      - key: FRONTEND_URL
+        sync: false        # your Vercel URL, e.g. https://byahego.vercel.app (OAuth return + password reset links)
+      - key: XENDIT_SECRET_KEY
+        sync: false        # Xendit secret key (xnd_development_... while testing, xnd_production_... when live)
+      - key: XENDIT_CALLBACK_TOKEN
+        sync: false        # Xendit dashboard -> Settings -> Webhooks -> "Callback verification token"
       - key: GOOGLE_CLIENT_ID
         sync: false        # optional, for "Continue with Google"
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: FACEBOOK_CLIENT_ID
+        sync: false        # optional, for "Continue with Facebook"
+      - key: FACEBOOK_CLIENT_SECRET
+        sync: false

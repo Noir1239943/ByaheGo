@@ -62,6 +62,7 @@ class PricingService
             'total' => $total,
             'security_deposit' => $vehicle->security_deposit,
             'due_now' => $total + $vehicle->security_deposit,
+            'cancellation_fee' => min((int) Settings::get('cancellation_fee'), $total),
             'free_cancellation_until' => $pickup->copy()->subHours((int) Settings::get('cancellation_cutoff_hours'))->toIso8601String(),
         ];
     }
@@ -70,13 +71,41 @@ class PricingService
     public function lateFee(Vehicle $vehicle, CarbonInterface $scheduledReturn, CarbonInterface $actualReturn): array
     {
         $minutesLate = $scheduledReturn->diffInMinutes($actualReturn, false);
-        if ($minutesLate <= Settings::get('late_grace_minutes')) {
-            return ['hours' => 0, 'fee' => 0];
+        // Each listing sets its own grace period; the platform setting is only the fallback.
+        $grace = $vehicle->grace_minutes ?? Settings::get('late_grace_minutes');
+        if ($minutesLate <= $grace) {
+            return ['hours' => 0, 'fee' => 0, 'grace_minutes' => (int) $grace, 'per_hour' => (int) $vehicle->late_fee_per_hour, 'full_days' => 0, 'extra_day_applied' => false];
         }
         $hours = (int) ceil($minutesLate / 60);
-        $fee = $hours * $vehicle->late_fee_per_hour;
+        $charge = $this->timeCharge($vehicle, $hours);
         $cap = (int) round(ceil($hours / 24) * $vehicle->daily_rate * Settings::get('late_fee_daily_cap'));
 
-        return ['hours' => $hours, 'fee' => min($fee, $cap)];
+        return ['hours' => $hours, 'fee' => min($charge['fee'], $cap), 'grace_minutes' => (int) $grace, 'per_hour' => (int) $vehicle->late_fee_per_hour, 'full_days' => $charge['full_days'], 'extra_day_applied' => $charge['extra_day_applied']];
+    }
+
+    /**
+     * What extra time costs, used for excess hours AND for paid extensions so they can never disagree. Whole days are charged at the
+     * daily rate. In the last partial day, once it reaches the "full day" threshold (default 5 hours) it counts as one more full
+     * day at the daily rate; before that it is the listing's per-hour rate.
+     */
+    public function timeCharge(Vehicle $vehicle, int $hours): array
+    {
+        $days = intdiv($hours, 24);
+        $rest = $hours % 24;
+        $threshold = (int) Settings::get('excess_hours_full_day');
+        $extraDay = $threshold > 0 && $rest >= $threshold;
+        return [
+            'fee' => (int) ($days * $vehicle->daily_rate + ($extraDay ? $vehicle->daily_rate : $rest * $vehicle->late_fee_per_hour)),
+            'full_days' => $days + ($extraDay ? 1 : 0),
+            'extra_day_applied' => $extraDay,
+        ];
+    }
+
+    /** The price of returning later: every started hour counts (there is no grace period on a paid extension). */
+    public function extensionCharge(Vehicle $vehicle, CarbonInterface $from, CarbonInterface $to): array
+    {
+        $hours = max(0, (int) ceil($from->diffInMinutes($to, false) / 60));
+        $charge = $this->timeCharge($vehicle, $hours);
+        return ['hours' => $hours, 'amount' => $charge['fee'], 'full_days' => $charge['full_days'], 'extra_day_applied' => $charge['extra_day_applied'], 'per_hour' => (int) $vehicle->late_fee_per_hour];
     }
 }

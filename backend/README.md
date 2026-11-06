@@ -1,15 +1,14 @@
 # ByaheGo – Backend API
 
-Laravel 13 (PHP 8.3) REST API with Sanctum token auth. Works with SQLite locally and PostgreSQL (Neon) in production.
+Laravel 13 (PHP 8.3) REST API with Sanctum token auth. It runs on PostgreSQL (a Neon project) everywhere; the tests use an in-memory SQLite database.
 
 ```bash
 composer install
-cp .env.example .env
+cp .env.example .env       # paste your Neon DIRECT connection string (no "-pooler") into DB_URL
 php artisan key:generate
-touch database/database.sqlite
-php artisan migrate --seed
-php artisan serve          # http://localhost:8000
-php artisan test           # 28 feature tests
+php artisan migrate --seed # demo data; prints the demo password
+php artisan serve          # http://localhost:8000  (or: node dev-parallel.mjs, which answers several requests at once)
+php artisan test
 ```
 
-See the main [README](../README.md) for features, API overview and deployment.
+See the main [README](../README.md) for features, API overview, security and deployment.

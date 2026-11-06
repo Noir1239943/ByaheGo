@@ -3,11 +3,15 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AdminAuditLog;
 use App\Models\Booking;
 use App\Models\Incident;
 use App\Models\Payment;
 use App\Models\Payout;
 use App\Services\BookingService;
+use App\Services\EvidenceService;
+use App\Services\InvoiceService;
+use App\Services\PaymentService;
 use App\Support\Notifier;
 use App\Support\Present;
 use Illuminate\Http\Request;
@@ -24,7 +28,7 @@ class AdminBookingController extends Controller
 
     public function index(Request $request)
     {
-        $q = Booking::with(['vehicle.hub', 'vehicle.photos', 'renter', 'host', 'incidents'])->latest();
+        $q = Booking::withRowFlags()->latest();
         $status = $request->input('status', 'all');
         match ($status) {
             'upcoming' => $q->where('status', 'confirmed'),
@@ -32,6 +36,7 @@ class AdminBookingController extends Controller
             'completed' => $q->where('status', 'completed'),
             'cancelled' => $q->where('status', 'cancelled'),
             'disputed' => $q->whereHas('incidents', fn ($i) => $i->where('status', 'open')),
+            'flagged' => $q->whereNotNull('admin_flag')->whereIn('status', ['confirmed', 'active']),
             default => null,
         };
         if ($term = $request->input('q')) {
@@ -40,24 +45,62 @@ class AdminBookingController extends Controller
                 ->orWhereHas('renter', fn ($r) => $r->whereRaw('LOWER(name) LIKE ?', [$like])->orWhereRaw('LOWER(email) LIKE ?', [$like]))
                 ->orWhereHas('vehicle', fn ($v) => $v->whereRaw('LOWER(plate_number) LIKE ?', [$like])->orWhereRaw('LOWER(model) LIKE ?', [$like])));
         }
+        // All the tab numbers and the summary strip come from one query.
+        $open = "exists (select 1 from incidents where incidents.booking_id = bookings.id and incidents.status = 'open')";
+        $n = Booking::selectRaw("count(*) as total,
+            coalesce(sum(case when status = 'confirmed' then 1 else 0 end), 0) as upcoming,
+            coalesce(sum(case when status = 'active' then 1 else 0 end), 0) as active,
+            coalesce(sum(case when status = 'completed' then 1 else 0 end), 0) as completed,
+            coalesce(sum(case when status = 'cancelled' then 1 else 0 end), 0) as cancelled,
+            coalesce(sum(case when {$open} then 1 else 0 end), 0) as disputed,
+            coalesce(sum(case when admin_flag is not null and status in ('confirmed', 'active') then 1 else 0 end), 0) as flagged,
+            coalesce(sum(case when created_at >= ? then 1 else 0 end), 0) as this_month,
+            coalesce(sum(case when status = 'confirmed' and pickup_at between ? and ? then 1 else 0 end), 0) as upcoming_week", [now()->startOfMonth(), now(), now()->addDays(7)])->first();
         $counts = [
-            'all' => Booking::count(),
-            'upcoming' => Booking::where('status', 'confirmed')->count(),
-            'active' => Booking::where('status', 'active')->count(),
-            'completed' => Booking::where('status', 'completed')->count(),
-            'cancelled' => Booking::where('status', 'cancelled')->count(),
-            'disputed' => Booking::whereHas('incidents', fn ($i) => $i->where('status', 'open'))->count(),
+            'all' => (int) $n->total, 'upcoming' => (int) $n->upcoming, 'active' => (int) $n->active, 'completed' => (int) $n->completed,
+            'cancelled' => (int) $n->cancelled, 'disputed' => (int) $n->disputed, 'flagged' => (int) $n->flagged,
         ];
-        $monthStart = now()->startOfMonth();
-        return response()->json(Present::paginated($q->paginate(10), fn ($b) => Present::bookingRow($b)) + [
+        $page = $q->paginate(10);
+        Present::warm($page->getCollection());
+        return response()->json(Present::paginated($page, fn ($b) => Present::bookingRow($b, true)) + [
             'counts' => $counts,
             'summary' => [
-                'this_month' => Booking::where('created_at', '>=', $monthStart)->count(),
+                'this_month' => (int) $n->this_month,
                 'active_now' => $counts['active'],
-                'upcoming_week' => Booking::where('status', 'confirmed')->whereBetween('pickup_at', [now(), now()->addDays(7)])->count(),
+                'upcoming_week' => (int) $n->upcoming_week,
                 'cancellation_rate' => $counts['all'] ? round($counts['cancelled'] / $counts['all'] * 100, 1) : 0,
             ],
         ]);
+    }
+
+    public function agreementPdf(string $reference, \App\Services\AgreementService $agreements)
+    {
+        return $agreements->download($this->find($reference));
+    }
+
+    /** One PDF for the police or an insurer. Every download is logged. */
+    public function evidencePdf(Request $request, string $reference, EvidenceService $evidence)
+    {
+        $booking = $this->find($reference);
+        $pdf = $evidence->pdf($booking);
+        AdminAuditLog::record($request->user(), 'evidence.download', $booking, null, ['bytes' => strlen($pdf)]);
+        $booking->log('evidence', 'Evidence packet downloaded.', $request->user()->id);
+        return response($pdf, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="ByaheGo-evidence-'.$booking->reference.'.pdf"',
+            'Cache-Control' => 'private, no-store',
+        ]);
+    }
+
+    /** An admin has looked into a "possible theft" flag and is clearing it (the renter's hold is lifted separately on the Users page). */
+    public function clearFlag(Request $request, string $reference)
+    {
+        $data = $request->validate(['note' => ['required', 'string', 'min:5', 'max:300']]);
+        $booking = $this->find($reference);
+        $booking->update(['admin_flag' => null, 'admin_flag_note' => null, 'flagged_at' => null]);
+        $booking->log('flag', 'Admin cleared the flag: '.$data['note'], $request->user()->id);
+        AdminAuditLog::record($request->user(), 'booking.clear_flag', $booking, $data['note']);
+        return response()->json(Present::booking($booking->fresh(), 'admin'));
     }
 
     public function show(string $reference)
@@ -69,6 +112,7 @@ class AdminBookingController extends Controller
     {
         $data = $request->validate(['reason' => ['required', 'string', 'max:200'], 'refund' => ['boolean']]);
         $booking = $this->bookings->cancel($this->find($reference), 'admin', $data['reason'], $request->user(), $data['refund'] ?? true);
+        AdminAuditLog::record($request->user(), 'booking.cancel', $booking, $data['reason'], ['refund' => $data['refund'] ?? true]);
         return response()->json(Present::booking($booking, 'admin'));
     }
 
@@ -76,7 +120,12 @@ class AdminBookingController extends Controller
     {
         $data = $request->validate(['amount' => ['required', 'integer', 'min:1'], 'reason' => ['required', 'string', 'max:200']]);
         $booking = $this->find($reference);
-        $this->bookings->issueRefund($booking, $data['amount'], 'Refund: '.$data['reason'], $request->user());
+        $refund = $this->bookings->issueRefund($booking, $data['amount'], 'Refund: '.$data['reason'], $request->user(), 'REQUESTED_BY_CUSTOMER');
+        AdminAuditLog::record($request->user(), 'booking.refund', $booking, $data['reason'], ['amount' => $data['amount'], 'status' => $refund->status]);
+        if ($refund->status === 'failed') {
+            // Xendit said no (for example some wallets can't do a partial refund on the day of payment). It stays on the Payments page as a failed refund.
+            throw \Illuminate\Validation\ValidationException::withMessages(['amount' => 'Xendit could not refund this: '.($refund->failure_reason ?: 'the provider refused it').' It is saved as a failed refund on the Payments page, where you can retry it later or mark it as paid by hand.']);
+        }
         return response()->json(Present::booking($booking->fresh(), 'admin'));
     }
 
@@ -102,19 +151,55 @@ class AdminBookingController extends Controller
 
     public function payments(Request $request)
     {
-        $q = Payment::with(['booking.vehicle', 'user'])->latest('id');
+        $q = Payment::with(['booking.vehicle', 'user', 'invoice', 'requester'])->latest('id');
         if ($type = $request->input('type')) $q->where('type', $type);
+        if ($status = $request->input('status')) $q->where('status', $status);
+        if ($method = $request->input('method')) $q->where('method', $method);
+        if ($from = $request->input('from')) $q->whereDate('created_at', '>=', $from);
+        if ($to = $request->input('to')) $q->whereDate('created_at', '<=', $to);
         if ($term = $request->input('q')) {
             $like = '%'.mb_strtolower($term).'%';
-            $q->where(fn ($w) => $w->whereRaw('LOWER(receipt_no) LIKE ?', [$like])->orWhereHas('booking', fn ($b) => $b->whereRaw('LOWER(reference) LIKE ?', [$like])));
+            $q->where(fn ($w) => $w->whereRaw('LOWER(receipt_no) LIKE ?', [$like])->orWhereRaw('LOWER(provider_payment_id) LIKE ?', [$like])->orWhereHas('booking', fn ($b) => $b->whereRaw('LOWER(reference) LIKE ?', [$like])));
         }
-        return response()->json(Present::paginated($q->paginate(15), fn ($p) => Present::payment($p)) + [
+        return response()->json(Present::paginated($q->paginate(15), fn ($p) => Present::payment($p, true)) + [
             'summary' => [
-                'collected' => (int) Payment::whereIn('type', ['charge', 'balance'])->sum('amount'),
-                'refunded' => (int) Payment::where('type', 'refund')->sum('amount'),
+                'collected' => (int) Payment::whereIn('type', Payment::MONEY_IN)->where('status', 'succeeded')->sum('amount'),
+                'refunded' => (int) Payment::where('type', 'refund')->where('status', 'succeeded')->sum('amount'),
+                'refunds_pending' => (int) Payment::where('type', 'refund')->where('status', 'pending')->sum('amount'),
+                'refunds_failed' => Payment::where('type', 'refund')->where('status', 'failed')->count(),
                 'fees' => (int) Payment::whereIn('type', ['late_fee', 'damage'])->sum('amount'),
             ],
         ]);
+    }
+
+    public function invoicePdf(int $id, InvoiceService $invoices)
+    {
+        $invoice = $invoices->issueFor(Payment::findOrFail($id));
+        abort_if(! $invoice, 404, 'There is no invoice for this payment.');
+        return $invoices->download($invoice);
+    }
+
+    /** Ask Xendit again about a payment or refund that is still pending. */
+    public function syncPayment(int $id, PaymentService $payments)
+    {
+        $p = Payment::findOrFail($id);
+        $p->type === 'refund' ? $payments->syncRefund($p) : $payments->verify($p);
+        return response()->json(Present::payment($p->fresh(['invoice', 'requester', 'booking.vehicle', 'user']), true));
+    }
+
+    public function retryRefund(Request $request, int $id, PaymentService $payments)
+    {
+        $p = $payments->retryRefund(Payment::findOrFail($id), $request->user());
+        AdminAuditLog::record($request->user(), 'refund.retry', $p, null, ['amount' => $p->amount, 'status' => $p->status]);
+        return response()->json(Present::payment($p->fresh(['invoice', 'requester', 'booking.vehicle', 'user']), true));
+    }
+
+    public function markRefundHandled(Request $request, int $id, PaymentService $payments)
+    {
+        $data = $request->validate(['note' => ['required', 'string', 'min:5', 'max:200']]);
+        $p = $payments->markRefundHandled(Payment::findOrFail($id), $request->user(), $data['note']);
+        AdminAuditLog::record($request->user(), 'refund.manual', $p, $data['note'], ['amount' => $p->amount]);
+        return response()->json(Present::payment($p->fresh(['invoice', 'requester', 'booking.vehicle', 'user']), true));
     }
 
     public function payouts(Request $request)
@@ -133,12 +218,13 @@ class AdminBookingController extends Controller
         ]]);
     }
 
-    public function markPayoutPaid(int $id)
+    public function markPayoutPaid(Request $request, int $id)
     {
         $payout = Payout::with('booking')->findOrFail($id);
         if ($payout->status !== 'paid') {
             $payout->update(['status' => 'paid', 'paid_at' => now(), 'reference' => 'PO-'.now()->format('ymd').'-'.str_pad((string) $payout->id, 4, '0', STR_PAD_LEFT)]);
             $payout->booking?->log('payout', 'Host payout of ₱'.number_format($payout->amount).' sent.');
+            AdminAuditLog::record($request->user(), 'payout.mark_paid', $payout, null, ['amount' => $payout->amount]);
             Notifier::send($payout->host_id, 'Payout sent', '₱'.number_format($payout->amount)." for {$payout->booking?->reference} was sent to your payout account.", '/host/earnings', 'success');
         }
         return response()->json(['ok' => true]);
@@ -160,6 +246,7 @@ class AdminBookingController extends Controller
             'suspend_renter' => ['boolean'],
         ]);
         $incident = $this->bookings->resolveIncident(Incident::findOrFail($id), $data['action'], (int) ($data['amount'] ?? 0), $data['notes'] ?? null, (bool) ($data['suspend_renter'] ?? false), $request->user());
+        AdminAuditLog::record($request->user(), 'dispute.resolve', $incident, $data['notes'] ?? null, ['action' => $data['action'], 'amount' => (int) ($data['amount'] ?? 0), 'suspend_renter' => (bool) ($data['suspend_renter'] ?? false)]);
         return response()->json(Present::incident($incident->fresh(['booking.vehicle', 'booking.renter', 'booking.host', 'reporter'])));
     }
 }

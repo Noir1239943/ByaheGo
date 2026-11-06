@@ -1,10 +1,14 @@
 import { api } from '@/lib/api'
+import type { PageMeta } from '@/types'
 import type { AppNotification, HostApplication, License, Payment, User, VehicleCard } from '@/types'
 
 export type BillingResponse = {
-  summary: { total_paid: number; total_refunded: number; fees_and_charges: number; balance_due: number; deposits_on_hold: number }
+  summary: { total_paid: number; total_refunded: number; refunds_pending: number; fees_and_charges: number; balance_due: number; deposits_on_hold: number }
   data: Payment[]
+  meta: PageMeta
 }
+
+export type BillingParams = { type?: string; status?: string; from?: string; to?: string; page?: number }
 
 export const accountService = {
   update: (body: Partial<User>) => api.put<{ user: User }>('/me', body).then((r) => r.data.user),
@@ -14,7 +18,7 @@ export const accountService = {
   notifications: () => api.get<{ data: AppNotification[] }>('/me/notifications').then((r) => r.data.data),
   readNotification: (id: number) => api.post(`/me/notifications/${id}/read`),
   readAll: () => api.post('/me/notifications/read-all'),
-  billing: () => api.get<BillingResponse>('/me/billing').then((r) => r.data),
+  billing: (params: BillingParams = {}) => api.get<BillingResponse>('/me/billing', { params }).then((r) => r.data),
   favorites: () => api.get<{ data: VehicleCard[] }>('/me/favorites').then((r) => r.data.data),
   favoriteIds: () => api.get<{ data: number[] }>('/me/favorite-ids').then((r) => r.data.data),
   addFavorite: (id: number) => api.post(`/me/favorites/${id}`),
@@ -24,7 +28,7 @@ export const accountService = {
   clearRecentlyViewed: () => api.delete('/me/recently-viewed'),
   verification: () => api.get<{ status: string; license: License | null }>('/verification').then((r) => r.data),
   submitVerification: (body: Record<string, unknown>) => api.post<{ status: string; decision: 'approve' | 'reject' | 'review'; message: string | null; license: License }>('/verification', body).then((r) => r.data),
-  hostApplication: () => api.get<{ application: HostApplication | null }>('/host-application').then((r) => r.data.application),
+  hostApplication: () => api.get<{ application: HostApplication | null; can_apply: boolean }>('/host-application').then((r) => r.data),
   applyHost: (body: Record<string, unknown>) => api.post<{ application: HostApplication }>('/host-application', body).then((r) => r.data.application),
   contact: (body: Record<string, unknown>) => api.post<{ message: string }>('/support', body).then((r) => r.data),
 }

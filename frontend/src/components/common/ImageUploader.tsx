@@ -79,7 +79,7 @@ export function ImageUploader({ purpose, value, onChange, label, hint, error, pr
       >
         {value || preview ? (
           <>
-            {preview ? <img src={preview} alt={label} className="h-full w-full object-contain" /> : privateFile ? <ProtectedImage id={value} alt={label} className="h-full w-full" /> : <img src={mediaUrl(value) ?? ''} alt={label} className="h-full w-full object-cover" />}
+            {preview ? <img src={preview} alt={label} className="h-full w-full object-contain" /> : privateFile ? <ProtectedImage id={value} alt={label} className="h-full w-full" /> : <img src={mediaUrl(value, 640) ?? ''} alt={label} className="h-full w-full object-cover" />}
             {busy && (
               <div className="absolute inset-0 flex items-center justify-center bg-white/70">
                 <div className="flex flex-col items-center gap-2"><Loader2 className="size-6 animate-spin text-brand" />{checking && <span className="text-xs font-semibold text-ink-700">Checking your photos…</span>}</div>
@@ -141,7 +141,7 @@ export function MultiImageUploader({ value, onChange, max = 8 }: { value: number
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {value.map((id, i) => (
           <div key={id} className="group relative aspect-[4/3] overflow-hidden rounded-xl border border-line-200 bg-line-100">
-            <img src={mediaUrl(id) ?? ''} alt={`Vehicle photo ${i + 1}`} className="h-full w-full object-cover" />
+            <img src={mediaUrl(id, 320) ?? ''} alt={`Vehicle photo ${i + 1}`} className="h-full w-full object-cover" />
             {i === 0 && <span className="absolute top-2 left-2 rounded-md bg-ink-900/80 px-1.5 py-0.5 text-[10px] font-bold text-white">COVER</span>}
             <button type="button" onClick={() => onChange(value.filter((x) => x !== id))} className="absolute top-2 right-2 rounded-lg bg-white/95 p-1.5 text-danger shadow-sm" aria-label="Remove photo">
               <Trash2 className="size-3.5" />

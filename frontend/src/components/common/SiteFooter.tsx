@@ -5,7 +5,7 @@ import { Logo } from './Logo'
 
 const COLUMNS = [
   { title: 'Rent', links: [['Cars', '/vehicles?type=sedan,hatchback'], ['SUVs', '/vehicles?type=suv'], ['Vans', '/vehicles?type=van,mpv'], ['Pickups', '/vehicles?type=pickup'], ['Motorcycles', '/vehicles?type=motorcycle']] },
-  { title: 'Company', links: [['About us', '/about'], ['How it works', '/how-it-works'], ['Live map', '/vehicles/map']] },
+  { title: 'Company', links: [['About us', '/about'], ['How it works', '/how-it-works'], ['Live map', '/vehicles?view=map']] },
   { title: 'Hosts', links: [['List your vehicle', '/become-a-host'], ['Host protection', '/become-a-host#protection'], ['Host dashboard', '/host']] },
   { title: 'Support', links: [['Help center', '/help'], ['Cancellation policy', '/terms#cancellation'], ['Rental agreement', '/terms'], ['Contact us', '/help#contact']] },
 ]
@@ -23,7 +23,7 @@ export function SiteFooter() {
                 <Mail className="size-4 text-accent" /> {SUPPORT_EMAIL}
               </a>
               <a href="tel:+63328882924" className="flex items-center gap-2 hover:text-white">
-                <Phone className="size-4 text-accent" /> {SUPPORT_PHONE} · 24/7 roadside help
+                <Phone className="size-4 text-accent" /> {SUPPORT_PHONE}
               </a>
             </div>
           </div>

@@ -1,13 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
-import { BadgeCheck, CalendarCheck, Car, CreditCard, Gavel, Headset, LayoutDashboard, Settings, Store, Users, Wallet } from 'lucide-react'
+import { BadgeCheck, CalendarCheck, Car, ClipboardList, CreditCard, Gavel, Headset, LayoutDashboard, Settings, Store, Users, Wallet } from 'lucide-react'
+import { STALE } from '@/lib/constants'
 import { adminService } from '@/services/admin'
 import DashboardLayout from './DashboardLayout'
 
 export default function AdminLayout() {
-  const { data } = useQuery({ queryKey: ['admin', 'overview', '30d'], queryFn: () => adminService.overview('30d'), staleTime: 30000 })
-  const a = data?.attention
+  // Only the sidebar badge numbers, not the whole overview page.
+  const { data: a } = useQuery({ queryKey: ['admin', 'attention'], queryFn: adminService.attention, staleTime: STALE.list })
   const groups = [
-    { items: [{ to: '/admin', label: 'Overview', icon: LayoutDashboard, end: true }, { to: '/admin/bookings', label: 'Bookings', icon: CalendarCheck }] },
+    { items: [{ to: '/admin', label: 'Overview', icon: LayoutDashboard, end: true }, { to: '/admin/bookings', label: 'Bookings', icon: CalendarCheck, badge: a?.flagged_bookings }] },
     {
       title: 'Finance',
       items: [
@@ -29,6 +30,7 @@ export default function AdminLayout() {
       title: 'Platform',
       items: [
         { to: '/admin/support', label: 'Support inbox', icon: Headset, badge: a?.support },
+        { to: '/admin/audit-log', label: 'Audit log', icon: ClipboardList },
         { to: '/admin/settings', label: 'Settings', icon: Settings },
       ],
     },

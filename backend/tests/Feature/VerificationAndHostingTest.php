@@ -3,11 +3,13 @@
 namespace Tests\Feature;
 
 use App\Models\DriverLicense;
+use App\Models\HostApplication;
 use App\Models\User;
 use App\Models\VerificationDecision;
 use App\Services\VerificationChecker;
 use App\Support\ImageHash;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class VerificationAndHostingTest extends TestCase
@@ -358,14 +360,102 @@ class VerificationAndHostingTest extends TestCase
         $this->as($admin)->postJson("/api/admin/verifications/{$license->id}/override", ['decision' => 'reject', 'note' => 'Nope'])->assertStatus(422);
     }
 
-    public function test_host_application_listing_and_approval_flow(): void
+    protected function hostApplicationPayload(array $over = []): array
+    {
+        return array_merge([
+            'full_name' => 'Kim Navarro', 'phone' => '0945 118 2290', 'city' => 'Cordova', 'address' => 'Brgy. Gabi, Cordova, Cebu', 'vehicle_count' => 2, 'vehicle_types' => ['sedan'],
+            'payout_method' => 'gcash', 'payout_account_name' => 'Kim Navarro', 'payout_account_number' => '0945 118 2290', 'agree_terms' => true,
+        ], $over);
+    }
+
+    public function test_only_id_verified_users_can_apply_to_host(): void
     {
         $u = $this->makeUser();
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload())->assertStatus(422)->assertJsonPath('code', 'verification_required');
+        $this->as($u)->getJson('/api/host-application')->assertJsonPath('can_apply', false);
+    }
+
+    public function test_host_application_validates_and_encrypts_payout_details(): void
+    {
+        $u = $this->verifiedRenter();
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['payout_method' => 'paypal']))->assertStatus(422)->assertJsonValidationErrors('payout_method');
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['payout_method' => 'bank']))->assertStatus(422)->assertJsonValidationErrors('payout_bank');
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['phone' => '12345']))->assertStatus(422)->assertJsonValidationErrors('phone');
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['address' => '']))->assertStatus(422)->assertJsonValidationErrors('address');
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['agree_terms' => false]))->assertStatus(422)->assertJsonValidationErrors('agree_terms');
+
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload(['payout_method' => 'bank', 'payout_bank' => 'BDO']))->assertCreated()
+            ->assertJsonPath('application.payout_account_masked', '•••• 2290')->assertJsonMissingPath('application.payout_account_number');
+        $raw = DB::table('host_applications')->value('payout_account_number');
+        $this->assertStringNotContainsString('09451182290', $raw); // stored encrypted
+        $this->assertSame('09451182290', HostApplication::first()->payout_account_number); // and read back transparently
+        $this->assertNotNull(HostApplication::first()->terms_accepted_at);
+
+        // Approval copies the payout account to the host, still encrypted.
+        $admin = $this->admin();
+        $id = $this->as($admin)->getJson('/api/admin/host-applications')->json('data.0.id');
+        $this->as($admin)->postJson("/api/admin/host-applications/{$id}/approve")->assertOk();
+        $this->assertStringNotContainsString('09451182290', DB::table('users')->where('id', $u->id)->value('payout_account_number'));
+        $this->assertSame('09451182290', $u->fresh()->payout_account_number);
+    }
+
+    public function test_rejected_applicants_hear_why_and_can_apply_again(): void
+    {
+        $u = $this->verifiedRenter();
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload())->assertCreated();
+        $admin = $this->admin();
+        $id = $this->as($admin)->getJson('/api/admin/host-applications')->json('data.0.id');
+        $this->as($admin)->postJson("/api/admin/host-applications/{$id}/reject", [])->assertStatus(422);
+        $this->as($admin)->postJson("/api/admin/host-applications/{$id}/reject", ['notes' => 'Please add your business permit'])->assertOk();
+        $this->assertDatabaseHas('user_notifications', ['user_id' => $u->id, 'title' => 'Host application update']);
+        $this->as($u)->getJson('/api/host/dashboard')->assertStatus(403); // still locked
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload())->assertCreated();
+        $this->as($u)->getJson('/api/host-application')->assertJsonPath('application.status', 'pending');
+    }
+
+    public function test_listing_needs_photos_registration_ctpl_and_settings_before_review(): void
+    {
+        $host = $this->host();
+        $hub = $this->hub();
+        $vehicle = $this->as($host)->postJson('/api/host/vehicles', [
+            'make' => 'Honda', 'model' => 'City', 'year' => 2021, 'type' => 'sedan', 'transmission' => 'automatic', 'fuel' => 'gasoline', 'seats' => 5,
+            'daily_rate' => 1500, 'pickup_type' => 'hub', 'hub_id' => $hub->id, 'plate_number' => 'XYZ 987',
+        ])->assertCreated()->json();
+        $msg = $this->as($host)->postJson("/api/host/vehicles/{$vehicle['id']}/submit")->assertStatus(422)->json('errors.status.0');
+        foreach (['at least 3 photos', 'OR and CR', 'CTPL insurance'] as $needle) $this->assertStringContainsString($needle, $msg);
+
+        $p = fn ($purpose, $seed = 1) => $this->as($host)->post('/api/media', ['file' => $this->patternFile($seed), 'purpose' => $purpose], ['Accept' => 'application/json'])->json('id');
+        $base = ['make' => 'Honda', 'model' => 'City', 'year' => 2021, 'type' => 'sedan', 'transmission' => 'automatic', 'fuel' => 'gasoline', 'seats' => 5,
+            'daily_rate' => 1500, 'pickup_type' => 'hub', 'hub_id' => $hub->id, 'plate_number' => 'XYZ 987', 'late_fee_per_hour' => 250,
+            'photo_ids' => [$p('vehicle_photo', 81), $p('vehicle_photo', 82), $p('vehicle_photo', 83)], 'or_media_id' => $p('vehicle_or', 84), 'cr_media_id' => $p('vehicle_cr', 85)];
+        // CTPL attached but already expired.
+        $this->as($host)->putJson("/api/host/vehicles/{$vehicle['id']}", $base + ['ctpl_media_id' => $p('vehicle_ctpl', 86), 'ctpl_expiry' => now()->subDay()->toDateString()])->assertOk();
+        $this->assertStringContainsString('CTPL expiry date', $this->as($host)->postJson("/api/host/vehicles/{$vehicle['id']}/submit")->assertStatus(422)->json('errors.status.0'));
+        $this->as($host)->putJson("/api/host/vehicles/{$vehicle['id']}", $base + ['ctpl_media_id' => $p('vehicle_ctpl', 86), 'ctpl_expiry' => now()->addYear()->toDateString(), 'fuel_policy' => 'bogus'])->assertStatus(422)->assertJsonValidationErrors('fuel_policy');
+        $this->as($host)->putJson("/api/host/vehicles/{$vehicle['id']}", $base + ['ctpl_media_id' => $p('vehicle_ctpl', 86), 'ctpl_expiry' => now()->addYear()->toDateString()])->assertOk();
+        $this->as($host)->postJson("/api/host/vehicles/{$vehicle['id']}/submit")->assertOk()->assertJsonPath('status', 'pending');
+
+        // The CTPL photo is private: the owner can open it, other people cannot.
+        $ctpl = $this->as($host)->getJson("/api/host/vehicles/{$vehicle['id']}")->json('ctpl_media_id');
+        $this->as($host)->get("/api/media/{$ctpl}")->assertOk();
+        $this->as($this->makeUser())->get("/api/media/{$ctpl}")->assertNotFound();
+    }
+
+    public function test_listing_decisions_need_a_reason_and_notify_the_host(): void
+    {
+        $v = $this->vehicle(['status' => 'pending']);
+        $admin = $this->admin();
+        $this->as($admin)->postJson("/api/admin/listings/{$v->id}/reject", [])->assertStatus(422);
+        $this->as($admin)->postJson("/api/admin/listings/{$v->id}/reject", ['reason' => 'CR photo is cut off'])->assertOk()->assertJsonPath('status', 'rejected');
+        $this->assertDatabaseHas('user_notifications', ['user_id' => $v->host_id, 'title' => 'Your listing needs changes']);
+        $this->guest()->getJson('/api/vehicles')->assertJsonCount(0, 'data');
+    }
+
+    public function test_host_application_listing_and_approval_flow(): void
+    {
+        $u = $this->verifiedRenter();
         $this->as($u)->getJson('/api/host/dashboard')->assertStatus(403);
-        $this->as($u)->postJson('/api/host-application', [
-            'full_name' => 'Kim Navarro', 'phone' => '09451182290', 'city' => 'Cordova', 'vehicle_count' => 2, 'vehicle_types' => ['sedan'],
-            'payout_method' => 'gcash', 'payout_account_name' => 'Kim Navarro', 'payout_account_number' => '09451182290', 'agree_terms' => true,
-        ])->assertCreated()->assertJsonPath('application.status', 'pending');
+        $this->as($u)->postJson('/api/host-application', $this->hostApplicationPayload())->assertCreated()->assertJsonPath('application.status', 'pending');
 
         $admin = $this->admin();
         $appId = $this->as($admin)->getJson('/api/admin/host-applications')->json('data.0.id');
@@ -379,14 +469,16 @@ class VerificationAndHostingTest extends TestCase
         ])->assertCreated()->assertJsonPath('status', 'draft')->json();
         $this->as($u)->postJson("/api/host/vehicles/{$vehicle['id']}/submit")->assertStatus(422)->assertJsonValidationErrors('status');
 
-        $photo = $this->as($u)->post('/api/media', ['file' => $this->fakeImage(), 'purpose' => 'vehicle_photo'], ['Accept' => 'application/json'])->json('id');
+        $photos = array_map(fn ($seed) => $this->as($u)->post('/api/media', ['file' => $this->patternFile($seed), 'purpose' => 'vehicle_photo'], ['Accept' => 'application/json'])->json('id'), [71, 72, 73]);
+        $ctpl = $this->as($u)->post('/api/media', ['file' => $this->fakeImage('ctpl.jpg'), 'purpose' => 'vehicle_ctpl'], ['Accept' => 'application/json'])->json('id');
         $or = $this->as($u)->post('/api/media', ['file' => $this->fakeImage('or.jpg'), 'purpose' => 'vehicle_or'], ['Accept' => 'application/json'])->json('id');
         $cr = $this->as($u)->post('/api/media', ['file' => $this->fakeImage('cr.jpg'), 'purpose' => 'vehicle_cr'], ['Accept' => 'application/json'])->json('id');
         $this->as($u)->putJson("/api/host/vehicles/{$vehicle['id']}", [
             'make' => 'Toyota', 'model' => 'Vios', 'year' => 2022, 'type' => 'sedan', 'transmission' => 'automatic', 'fuel' => 'gasoline', 'seats' => 5,
-            'daily_rate' => 1800, 'pickup_type' => 'hub', 'hub_id' => $hub->id, 'plate_number' => 'GAB 1234',
-            'photo_ids' => [$photo], 'or_media_id' => $or, 'cr_media_id' => $cr,
-        ])->assertOk()->assertJsonPath('city', 'Cebu City');
+            'daily_rate' => 1800, 'pickup_type' => 'hub', 'hub_id' => $hub->id, 'plate_number' => 'GAB 1234', 'late_fee_per_hour' => 300,
+            'photo_ids' => $photos, 'or_media_id' => $or, 'cr_media_id' => $cr,
+            'ctpl_media_id' => $ctpl, 'ctpl_expiry' => now()->addMonths(6)->toDateString(), 'grace_minutes' => 30, 'fuel_policy' => 'full_to_full',
+        ])->assertOk()->assertJsonPath('city', 'Cebu City')->assertJsonPath('fuel_policy', 'full_to_full');
         $this->as($u)->postJson("/api/host/vehicles/{$vehicle['id']}/submit")->assertOk()->assertJsonPath('status', 'pending');
         $this->guest()->getJson('/api/vehicles')->assertJsonCount(0, 'data');
 
@@ -404,13 +496,13 @@ class VerificationAndHostingTest extends TestCase
     {
         $admin = $this->admin();
         $u = $this->makeUser();
-        $this->as($admin)->postJson("/api/admin/users/{$u->id}/suspend", ['reason' => 'Fake documents'])->assertOk()->assertJsonPath('user.status', 'suspended');
-        $this->guest()->postJson('/api/auth/login', ['login' => $u->username, 'password' => 'Password123'])->assertStatus(422);
+        $this->as($admin)->postJson("/api/admin/users/{$u->id}/suspend", ['reason' => 'Fake documents', 'until' => now()->addDays(7)->toDateString()])->assertOk()->assertJsonPath('user.status', 'suspended');
+        $this->guest()->postJson('/api/auth/login', ['login' => $u->username, 'password' => 'Password123'])->assertStatus(403)->assertJsonPath('code', 'account_blocked');
         $this->as($admin)->postJson("/api/admin/users/{$u->id}/reinstate")->assertOk()->assertJsonPath('user.status', 'active');
 
         $this->as($admin)->putJson('/api/admin/settings', [
             'service_fee_rate' => 10, 'commission_rate' => 15, 'late_grace_minutes' => 60, 'cancellation_cutoff_hours' => 24,
-            'late_fee_daily_cap' => 1.5, 'deposit_release_days' => 3,
+            'late_fee_daily_cap' => 1.5, 'deposit_release_days' => 3, 'default_security_deposit' => 3000, 'cancellation_fee' => 0, 'pending_booking_minutes' => 30, 'excess_hours_full_day' => 5, 'checkin_host_window_hours' => 12, 'host_review_hours' => 24, 'theft_overdue_hours' => 3,
         ])->assertOk();
         $v = $this->vehicle();
         $q = $this->guest()->postJson("/api/vehicles/{$v->id}/quote", ['pickup_at' => now()->addDays(3)->toIso8601String(), 'return_at' => now()->addDays(4)->toIso8601String()]);

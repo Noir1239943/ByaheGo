@@ -1,6 +1,6 @@
 import { peso } from '@/lib/format'
 
-export const AGREEMENT_VERSION = '2026.1'
+const AGREEMENT_VERSION = '2026.3'
 
 const SECTIONS = (deposit?: number) => [
   {
@@ -8,16 +8,16 @@ const SECTIONS = (deposit?: number) => [
     title: '1. Booking and payment',
     body: [
       'Your booking is confirmed once payment succeeds. You pay the trip total plus a refundable security deposit.',
-      'Payments go through our payment partner (GCash, Maya, cards, Google Pay, Apple Pay). You get an official receipt (OR) and invoice for every payment in Payments & billing.',
+      'Payments go through our payment partner, Xendit (GCash, Maya, cards, QR Ph, GrabPay, ShopeePay). You get a system-generated invoice for every payment and a refund receipt for every refund in Payments & billing. These are not BIR-registered official receipts.',
     ],
   },
   {
     id: 'cancellation',
     title: '2. Cancellations and refunds',
     body: [
-      'You can cancel for free up to 24 hours (one day) before your pick-up time. You get a full refund of the trip total and the deposit to your original payment method.',
+      'You can cancel for free up to 24 hours (one day) before your pick-up time. You get a full refund of the trip total and the deposit to your original payment method, minus a cancellation fee only if ByaheGo has set one (it is shown at checkout and in your agreement; by default there is none).',
       'Less than 24 hours before pick-up, trips can no longer be cancelled in the app. Contact support if something urgent comes up – we review these case by case.',
-      'If a host or ByaheGo cancels your trip, you always get a full refund.',
+      'If a host or ByaheGo cancels your trip, you always get a full refund, at any time.',
       'Refunds usually show up within 3–5 banking days, depending on your bank or e-wallet.',
     ],
   },
@@ -33,7 +33,7 @@ const SECTIONS = (deposit?: number) => [
     id: 'late',
     title: '4. Late returns (excess hours)',
     body: [
-      'You have a 60-minute grace period after your scheduled return time.',
+      'Every listing sets its own grace period after the scheduled return time (shown on the listing and written into your agreement).',
       'After that, the vehicle\'s hourly late fee applies for every hour or part of an hour, capped at 1.5× the daily rate for each day late. Late fees are deducted from your deposit; anything above the deposit is billed to you.',
       'If you need more time, contact your host before your return time.',
     ],
@@ -43,7 +43,7 @@ const SECTIONS = (deposit?: number) => [
     title: '5. Damage and liability',
     body: [
       `A refundable security deposit${deposit ? ` (${peso(deposit)} for this vehicle)` : ''} is held during your trip and returned within 3 days of the return inspection.`,
-      'If the vehicle is accidentally damaged during your trip, you are liable for repair costs up to the limit of your protection plan: Standard ₱20,000, Plus ₱8,000, Premium ₱2,500.',
+      'If the vehicle is accidentally damaged during your trip, you are liable for repair costs up to the limit of your protection plan: Standard ₱20,000, Plus ₱8,000, Premium ₱2,500. This is ByaheGo\'s damage policy for renters, not an insurance policy.',
       'The host files a damage report with photos and an estimate. ByaheGo reviews every claim and can approve, reduce or dismiss it. Approved amounts are taken from your deposit first; any remaining balance is billed to you.',
     ],
   },

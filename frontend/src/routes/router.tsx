@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react'
 import { createBrowserRouter, Navigate } from 'react-router'
 import { PageLoader } from '@/components/common/States'
+import { RouteError } from '@/components/common/RouteError'
 import AccountLayout from '@/layouts/AccountLayout'
 import AuthLayout from '@/layouts/AuthLayout'
 import CheckoutLayout from '@/layouts/CheckoutLayout'
@@ -18,6 +19,7 @@ const page = (load: () => Promise<{ default: ComponentType }>) => async () => ({
 export const router = createBrowserRouter([
   {
     element: <RootLayout />,
+    errorElement: <RouteError />, // any page that crashes or fails to load shows this instead of the raw error
     hydrateFallbackElement: <PageLoader />,
     children: [
       {
@@ -64,9 +66,16 @@ export const router = createBrowserRouter([
             children: [
               { path: 'login', lazy: page(() => import('@/pages/auth/LoginPage')), handle: { title: 'Log in' } },
               { path: 'register', lazy: page(() => import('@/pages/auth/RegisterPage')), handle: { title: 'Create your account' } },
+              { path: 'forgot-password', lazy: page(() => import('@/pages/auth/ForgotPasswordPage')), handle: { title: 'Forgot password' } },
+              { path: 'reset-password', lazy: page(() => import('@/pages/auth/ResetPasswordPage')), handle: { title: 'Reset password' } },
             ],
           },
         ],
+      },
+      {
+        // Not guest-only: the sign-in finishes here while a session may already exist.
+        element: <AuthLayout />,
+        children: [{ path: 'auth/callback', lazy: page(() => import('@/pages/auth/AuthCallbackPage')), handle: { title: 'Signing you in' } }],
       },
       {
         element: <RequireAuth />,
@@ -75,16 +84,20 @@ export const router = createBrowserRouter([
             element: <CheckoutLayout />,
             children: [
               { path: 'checkout/:vehicleId', lazy: page(() => import('@/pages/checkout/CheckoutPage')), handle: { title: 'Confirm and pay', step: 1 } },
+              { path: 'checkout/return/:reference', lazy: page(() => import('@/pages/checkout/CheckoutReturnPage')), handle: { title: 'Confirming your payment', step: 2 } },
               { path: 'booking/:reference/confirmed', lazy: page(() => import('@/pages/checkout/BookingConfirmedPage')), handle: { title: 'You\'re all set', step: 3 } },
             ],
           },
           {
             element: <FocusLayout />,
-            children: [{ path: 'verify', lazy: page(() => import('@/pages/verification/VerifyPage')), handle: { title: 'Verify your identity' } }],
+            children: [
+              { path: 'verify', lazy: page(() => import('@/pages/verification/VerifyPage')), handle: { title: 'Verify your identity' } },
+              { path: 'trips/:reference/inspect/:stage', lazy: page(() => import('@/pages/account/InspectionPage')), handle: { title: 'Trip photos' } },
+            ],
           },
           {
             element: <PrintLayout />,
-            children: [{ path: 'invoice/:reference', lazy: page(() => import('@/pages/account/InvoicePage')), handle: { title: 'Invoice & official receipt' } }],
+            children: [{ path: 'invoice/:reference', lazy: page(() => import('@/pages/account/InvoicePage')), handle: { title: 'Booking summary' } }],
           },
         ],
       },
@@ -127,6 +140,7 @@ export const router = createBrowserRouter([
               { path: 'users', lazy: page(() => import('@/pages/admin/AdminUsersPage')), handle: { title: 'Users', subtitle: 'Renters, hosts and admins' } },
               { path: 'users/:id', lazy: page(() => import('@/pages/admin/AdminUserDetailPage')), handle: { title: 'User details' } },
               { path: 'support', lazy: page(() => import('@/pages/admin/AdminSupportPage')), handle: { title: 'Support inbox', subtitle: 'Messages from customers' } },
+              { path: 'audit-log', lazy: page(() => import('@/pages/admin/AdminAuditLogPage')), handle: { title: 'Audit log', subtitle: 'Who did what, when and why' } },
               { path: 'settings', lazy: page(() => import('@/pages/admin/AdminSettingsPage')), handle: { title: 'Settings', subtitle: 'Fees and policies' } },
             ],
           },

@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\AdminAuditLog;
 use App\Models\Booking;
 use App\Models\DriverLicense;
 use App\Models\Favorite;
@@ -13,12 +14,15 @@ use App\Models\Payment;
 use App\Models\Payout;
 use App\Models\RecentlyViewed;
 use App\Models\Review;
+use App\Models\SocialAccount;
 use App\Models\SupportTicket;
 use App\Models\User;
 use App\Models\UserNotification;
 use App\Models\Vehicle;
 use App\Services\PricingService;
 use App\Services\VerificationChecker;
+use App\Services\VerificationDecider;
+use App\Support\DemoData;
 use App\Support\Settings;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
@@ -27,7 +31,8 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Populates a fresh database with demo data (accounts, Cebu vehicles, trips, payments).
- * Safe to run on every deploy: it does nothing if the admin account already exists.
+ * Safe to run on every deploy: it never touches existing data and does nothing if the demo admin already exists.
+ * On a live site (APP_ENV=production) demo data is only created when SEED_DEMO_DATA=true, with the password from DEMO_PASSWORD.
  */
 class DatabaseSeeder extends Seeder
 {
@@ -38,12 +43,21 @@ class DatabaseSeeder extends Seeder
     protected array $hubs = [];
     protected array $users = [];
 
+    /** The password of every demo account for this run. */
+    protected string $password = '';
+
     public function run(): void
     {
-        if (User::where('username', 'Admin')->exists()) {
-            $this->command?->info('Database already has data – skipping seed.');
+        $this->seedRealAdmin();
+        if (! DemoData::allowed()) {
+            $this->command?->info('Demo data is off (SEED_DEMO_DATA is not true).');
             return;
         }
+        if (User::where('username', 'Admin')->exists()) {
+            $this->command?->info('Database already has demo data – skipping seed.');
+            return;
+        }
+        [$this->password, $generated] = DemoData::password();
         Model::unguard();
         mt_srand(2026);
         DB::transaction(function () {
@@ -51,11 +65,38 @@ class DatabaseSeeder extends Seeder
             $this->seedHubs();
             $vehicles = $this->seedVehicles();
             $this->seedLicenses();
-            $this->seedBookings($vehicles);
+            if (DemoData::withTrips()) {
+                $this->seedBookings($vehicles);
+            }
             $this->seedExtras($vehicles);
+            if (DemoData::withTrips()) {
+                $this->seedAccountsAndAudit();
+                $this->seedAgreements();
+            }
         });
         Model::reguard();
         Settings::flush();
+        if ($generated) {
+            $this->command?->warn("Demo accounts were created. Their password is: {$this->password}  (set DEMO_PASSWORD in .env to choose your own)");
+        }
+    }
+
+    /** Creates one real admin from ADMIN_EMAIL and ADMIN_PASSWORD, if both are set and nobody has that email. Independent of demo data. */
+    protected function seedRealAdmin(): void
+    {
+        $email = strtolower(trim((string) config('app.admin_email')));
+        $password = (string) config('app.admin_password');
+        if ($email === '' || $password === '') {
+            return;
+        }
+        DemoData::assertStrong($password, 'ADMIN_PASSWORD');
+        if (User::where('email', $email)->exists()) {
+            $this->command?->info('The administrator already exists.');
+            return;
+        }
+        (new User)->forceFill(['name' => 'ByaheGo Admin', 'username' => 'siteadmin', 'email' => $email, 'password' => $password, 'role' => 'admin',
+            'is_super_admin' => true, 'verification_status' => 'verified', 'email_verified_at' => now()])->save();
+        $this->command?->info("Administrator {$email} created.");
     }
 
     protected function user(string $username, string $name, string $role = 'renter', array $extra = []): User
@@ -66,7 +107,7 @@ class DatabaseSeeder extends Seeder
             'name' => $name,
             'username' => $username,
             'email' => $email,
-            'password' => 'Password123',
+            'password' => $this->password,
             'role' => $role,
             'verification_status' => 'verified',
             'email_verified_at' => now(),
@@ -76,7 +117,7 @@ class DatabaseSeeder extends Seeder
 
     protected function seedUsers(): void
     {
-        $this->user('Admin', 'Martin Kyle Obidas', 'admin', ['email' => 'admin@byahego.test', 'phone' => '0917 000 0001', 'city' => 'Cordova', 'is_super_admin' => true]);
+        $this->user('Admin', 'ByaheGo Admin', 'admin', ['email' => 'admin@byahego.test', 'phone' => '0917 000 0001', 'city' => 'Cordova', 'is_super_admin' => true]);
         $this->user('Test123', 'Vincent Laroco', 'renter', ['email' => 'test123@byahego.test', 'phone' => '0917 123 4567', 'city' => 'Lapu-Lapu City']);
 
         $payout = fn ($method, $name, $no) => ['payout_method' => $method, 'payout_account_name' => $name, 'payout_account_number' => $no];
@@ -95,6 +136,12 @@ class DatabaseSeeder extends Seeder
         $this->user('jerome.bautista', 'Jerome Bautista', 'renter', ['verification_status' => 'pending', 'city' => 'Cebu City', 'created_at' => now()->subDays(3)]);
         $this->user('rica.domingo', 'Rica Domingo', 'renter', ['verification_status' => 'pending', 'city' => 'Mandaue City', 'created_at' => now()->subDays(2)]);
         $this->user('lance.uy', 'Lance Uytengsu', 'renter', ['verification_status' => 'pending', 'city' => 'Lapu-Lapu City', 'created_at' => now()->subDay()]);
+        // Renters whose ID check is decided automatically (see seedAutoDecisions).
+        $this->user('dennis.cruz', 'Dennis Cruz', 'renter', ['verification_status' => 'unverified', 'city' => 'Cebu City', 'phone' => '0917 662 3081', 'created_at' => now()->subDays(4)]);
+        $this->user('ana.lopez', 'Ana Lopez', 'renter', ['verification_status' => 'unverified', 'city' => 'Mandaue City', 'phone' => '0928 407 1176', 'created_at' => now()->subDays(3)]);
+        // A temporary suspension that ends by itself, and a permanent revoke.
+        $this->user('sofia.ramos', 'Sofia Ramos', 'renter', ['status' => 'suspended', 'suspended_at' => now()->subDays(2), 'suspended_until' => now()->addDays(12), 'suspended_reason' => 'Name on the ID did not match the account. Please contact support to confirm your identity.', 'blocked_by' => $this->users['Admin']->id, 'city' => 'Talisay City']);
+        $this->user('marco.tan', 'Marco Tan', 'renter', ['status' => 'revoked', 'suspended_at' => now()->subDays(6), 'revoked_at' => now()->subDays(6), 'suspended_reason' => 'Repeated fraudulent bookings', 'blocked_by' => $this->users['Admin']->id, 'city' => 'Cebu City']);
         $this->user('kim.navarro', 'Kim Navarro', 'renter', ['verification_status' => 'unverified', 'city' => 'Cordova', 'phone' => '0945 118 2290', 'created_at' => now()->subDays(9)]);
         $this->user('diego.ramos', 'Diego Ramos', 'renter', ['status' => 'suspended', 'suspended_at' => now()->subDays(20), 'suspended_reason' => 'Vehicle not returned (BG case under investigation)', 'city' => 'Cebu City']);
     }
@@ -118,7 +165,8 @@ class DatabaseSeeder extends Seeder
     {
         $carFeatures = ['Air conditioning', 'Bluetooth audio', 'USB charging', 'Backup camera', 'Dash cam', 'Apple CarPlay', 'Android Auto', 'Child seat anchors', 'Keyless entry', 'Cruise control', 'Roof rack', 'Spare tire & tools'];
         $hub = fn ($name) => ['pickup_type' => 'hub', 'hub_id' => $this->hubs[$name]->id, 'city' => $this->hubs[$name]->city, 'lat' => $this->hubs[$name]->lat, 'lng' => $this->hubs[$name]->lng];
-        $own = fn ($address, $city, $lat, $lng) => ['pickup_type' => 'own', 'pickup_address' => $address, 'city' => $city, 'lat' => $lat, 'lng' => $lng];
+        // The public area is the barangay part of the address (the part that is not a landmark), never the street.
+        $own = fn ($address, $city, $lat, $lng) => ['pickup_type' => 'own', 'pickup_address' => $address, 'city' => $city, 'area' => (collect(explode(',', $address))->map(fn ($p) => trim($p))->reject(fn ($p) => str_starts_with($p, 'near '))->last()) ?: $city, 'lat' => $lat, 'lng' => $lng];
 
         $list = [
             ['Host123', 'Toyota', 'Fortuner', 2023, 'suv', 'automatic', 'diesel', 7, 'Pearl White', '#E9EDF0', 3200, $hub('Ayala Center Cebu Hub'), ['driver' => 1500, 'deposit' => 5000, 'plate' => 'NBC 4821', 'weekly' => 19800],
@@ -270,6 +318,70 @@ class DatabaseSeeder extends Seeder
             $result = $checker->run($license, $u);
             $license->update(['auto_score' => $result['score'], 'auto_label' => $result['label'], 'auto_checks' => $result['checks']]);
         }
+        $this->seedAutoDecisions($checker);
+    }
+
+    /** One submission the rules approved on their own and one they rejected, with their decision logs. */
+    protected function seedAutoDecisions(VerificationChecker $checker): void
+    {
+        $decider = app(VerificationDecider::class);
+        $original = config('verification.auto_approve');
+        config(['verification.auto_approve' => true]);
+        $device = function (float $faceMatch) {
+            $checks = [];
+            foreach (array_keys(VerificationChecker::DEVICE_CHECKS) as $key) {
+                $checks[] = ['key' => $key, 'status' => 'pass', 'value' => in_array($key, ['face_match']) ? $faceMatch : 0.9, 'detail' => 'ok'];
+            }
+            return VerificationChecker::sanitizeClientChecks([
+                'checks' => $checks, 'face_similarity' => $faceMatch, 'liveness' => 0.92, 'antispoof' => 0.94,
+                'ocr_keyword_hits' => ['REPUBLIC OF THE PHILIPPINES', 'LAND TRANSPORTATION OFFICE', "DRIVER'S LICENSE"],
+                'ocr_text' => ['front' => "REPUBLIC OF THE PHILIPPINES\nLAND TRANSPORTATION OFFICE\nDRIVER'S LICENSE", 'back' => 'RESTRICTIONS CONDITIONS'],
+                'faces' => ['license' => ['x' => 0.06, 'y' => 0.3, 'w' => 0.24, 'h' => 0.42], 'selfie' => ['x' => 0.3, 'y' => 0.2, 'w' => 0.3, 'h' => 0.45]],
+            ]);
+        };
+        foreach ([
+            ['dennis.cruz', 'Dennis Cruz', 'N07-22-348821', 4, 0.86, 'Brgy. Lahug, Cebu City'],
+            ['ana.lopez', 'Ana Lopez', 'N09-21-771204', 5, 0.31, 'A.S. Fortuna St, Banilad, Mandaue City'],
+        ] as [$username, $name, $number, $n, $match, $address]) {
+            $u = $this->users[$username];
+            $license = DriverLicense::create([
+                'user_id' => $u->id, 'license_type' => 'ph', 'license_number' => $number, 'full_name' => $name,
+                'birthdate' => now()->subYears(31)->subDays(40)->toDateString(), 'expiry_date' => now()->addYears(4)->toDateString(),
+                'address' => $address, 'nationality' => 'Filipino', 'restriction_codes' => ['A', 'B', 'B1'],
+                'front_media_id' => $this->media('license_front_'.(($n % 3) + 1).'.png', 'license_front', $u)->id,
+                'back_media_id' => $this->media('license_back_'.(($n % 3) + 1).'.png', 'license_back', $u)->id,
+                'selfie_media_id' => $this->media('selfie_'.(($n % 3) + 1).'.png', 'selfie', $u)->id,
+                'client_checks' => $device($match), 'status' => 'pending', 'created_at' => now()->subHours(mt_rand(30, 70)),
+            ]);
+            $result = $checker->run($license, $u);
+            $license->update(['auto_score' => $result['score'], 'auto_label' => $result['label'], 'auto_checks' => $result['checks']]);
+            $decider->apply($license->fresh(), $u, $result);
+        }
+        config(['verification.auto_approve' => $original]);
+    }
+
+    /** Sign-in links, blocked accounts and a trail of admin actions for the audit log screen. */
+    /** Every demo booking gets a signed agreement, so the PDF downloads work on demo data too. */
+    public function seedAgreements(): void
+    {
+        $agreements = app(\App\Services\AgreementService::class);
+        Booking::with('agreement')->each(fn (Booking $b) => $agreements->backfill($b));
+    }
+
+    protected function seedAccountsAndAudit(): void
+    {
+        SocialAccount::create(['user_id' => $this->users['andrea.santos']->id, 'provider' => 'google', 'provider_user_id' => '110248113551']);
+        SocialAccount::create(['user_id' => $this->users['paolo.cruz']->id, 'provider' => 'facebook', 'provider_user_id' => '10159123450']);
+
+        $admin = $this->users['Admin'];
+        $log = fn (string $action, ?object $target, ?string $reason, int $hoursAgo, array $meta = []) => AdminAuditLog::record($admin, $action, $target, $reason, $meta)
+            ->forceFill(['created_at' => now()->subHours($hoursAgo)])->save();
+        $log('user.suspend', $this->users['sofia.ramos'], $this->users['sofia.ramos']->suspended_reason, 48, ['until' => $this->users['sofia.ramos']->suspended_until?->toIso8601String()]);
+        $log('user.revoke', $this->users['marco.tan'], 'Repeated fraudulent bookings', 144);
+        $log('user.suspend', $this->users['diego.ramos'], 'Vehicle not returned (BG case under investigation)', 480);
+        $log('host_application.approve', HostApplication::first(), null, 700);
+        $log('settings.update', null, null, 900, ['service_fee_rate' => 7.5, 'commission_rate' => 15]);
+        if ($license = DriverLicense::where('status', 'approved')->whereNotNull('reviewed_by')->first()) $log('verification.approve', $license, null, 1200);
     }
 
     protected function payment(Booking $b, string $type, string $method, int $amount, string $desc, Carbon $at, ?string $hint = null): void
@@ -514,7 +626,7 @@ class DatabaseSeeder extends Seeder
             ['Your trip is booked!', 'Toyota Fortuner 2023 · pick-up in 6 days. We\'ll remind you the day before.', '/account/trips', 'success', 30],
             ['Price drop on a saved car', 'Mitsubishi Montero Sport 2022 is one of the best-rated SUVs this month.', '/account/saved', 'info', 6],
         ];
-        foreach ($notes as [$t, $b, $l, $k, $hoursAgo]) {
+        foreach (DemoData::withTrips() ? $notes : [] as [$t, $b, $l, $k, $hoursAgo]) {
             UserNotification::create(['user_id' => $test->id, 'title' => $t, 'body' => $b, 'link' => $l, 'kind' => $k,
                 'read_at' => $hoursAgo > 100 ? now() : null, 'created_at' => now()->subHours($hoursAgo)]);
         }

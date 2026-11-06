@@ -54,6 +54,24 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    // The website (Vercel) that the API sends people back to after OAuth sign-in and in password reset emails.
+    // Measure every API request (time + query count) into storage/logs/perf.log. For tuning only.
+    'perf_log' => env('PERF_LOG', false) === 'sql' ? 'sql' : filter_var(env('PERF_LOG', false), FILTER_VALIDATE_BOOLEAN),
+
+    // Demo data (see App\Support\DemoData). Off on a live site unless SEED_DEMO_DATA=true; the password comes from DEMO_PASSWORD only.
+    'seed_demo_data' => filter_var(env('SEED_DEMO_DATA', false), FILTER_VALIDATE_BOOLEAN),
+    'demo_password' => env('DEMO_PASSWORD'),
+    // On a live site demo trips (bookings, payments, reviews, disputes, audit entries) are only created with SEED_DEMO_TRIPS=true.
+    'seed_demo_trips' => filter_var(env('SEED_DEMO_TRIPS', false), FILTER_VALIDATE_BOOLEAN),
+    // Optional real administrator for a live site that has no demo data: both values must be set in the host's environment.
+    'admin_email' => env('ADMIN_EMAIL'),
+    'admin_password' => env('ADMIN_PASSWORD'),
+
+    'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
+
+    // Shown to blocked people as the place to appeal.
+    'support_email' => env('SUPPORT_EMAIL', 'support@byahego.ph'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

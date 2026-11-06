@@ -20,6 +20,10 @@ class Booking extends Model
         'agreement_accepted_at' => 'datetime',
         'settled_at' => 'datetime',
         'cancelled_at' => 'datetime',
+        'expires_at' => 'datetime',
+        'checkout_submitted_at' => 'datetime',
+        'host_review_due_at' => 'datetime',
+        'return_reminder_sent_at' => 'datetime',
         'pickup_lat' => 'float',
         'pickup_lng' => 'float',
     ];
@@ -30,14 +34,25 @@ class Booking extends Model
     public function payments(): HasMany { return $this->hasMany(Payment::class)->orderBy('id'); }
     public function events(): HasMany { return $this->hasMany(BookingEvent::class)->orderByDesc('id'); }
     public function inspections(): HasMany { return $this->hasMany(Inspection::class)->orderBy('id'); }
+    public function inspectionPhotos(): HasMany { return $this->hasMany(InspectionPhoto::class)->orderBy('id'); }
+    public function extensions(): HasMany { return $this->hasMany(BookingExtension::class)->orderByDesc('id'); }
     public function incidents(): HasMany { return $this->hasMany(Incident::class)->orderByDesc('id'); }
     public function review(): HasOne { return $this->hasOne(Review::class); }
     public function payout(): HasOne { return $this->hasOne(Payout::class); }
+    public function agreement(): HasOne { return $this->hasOne(BookingAgreement::class); }
 
-    /** Bookings that block a vehicle's calendar. */
+    /** Bookings that block a vehicle's calendar: confirmed or active ones, and unpaid pending ones until their hold runs out. */
+    /** Adds "has an open incident" and "has a review" as columns, so a list of rows needs no extra queries for them. */
+    public function scopeWithRowFlags(Builder $q): Builder
+    {
+        return $q->addSelect(['bookings.*', \Illuminate\Support\Facades\DB::raw("exists (select 1 from incidents where incidents.booking_id = bookings.id and incidents.status = 'open') as has_open_incident"),
+            \Illuminate\Support\Facades\DB::raw('exists (select 1 from reviews where reviews.booking_id = bookings.id) as has_review')]);
+    }
+
     public function scopeBlocking(Builder $q): Builder
     {
-        return $q->whereIn('status', ['confirmed', 'active']);
+        return $q->where(fn ($w) => $w->whereIn('status', ['confirmed', 'active'])
+            ->orWhere(fn ($p) => $p->where('status', 'pending')->where('expires_at', '>', now())));
     }
 
     public function getRouteKeyName(): string
