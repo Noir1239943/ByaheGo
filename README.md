@@ -90,7 +90,7 @@ export default function HomePage() {
 
 ## Run it locally
 
-**Requirements:** PHP 8.3+ with `pdo_pgsql`, `gd` and `fileinfo` (in `php.ini` uncomment `extension=pdo_pgsql`, `extension=pgsql`, `extension=gd`, `extension=fileinfo`; add `extension=pdo_sqlite` too if you want to run the tests), Composer 2, Node 20+, and a free [Neon](https://neon.tech) project (the app uses Postgres everywhere, there is no local database file).
+**Requirements:** PHP 8.4+ with `pdo_pgsql`, `gd` and `fileinfo` (in `php.ini` uncomment `extension=pdo_pgsql`, `extension=pgsql`, `extension=gd`, `extension=fileinfo`; add `extension=pdo_sqlite` too if you want to run the tests), Composer 2, Node 20+, and a free [Neon](https://neon.tech) project (the app uses Postgres everywhere, there is no local database file).
 
 ```bash
 # 1) API

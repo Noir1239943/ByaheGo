@@ -1,5 +1,5 @@
-# ByaheGo API – Laravel on PHP 8.3 + Apache (for Render)
-FROM php:8.3-apache
+# ByaheGo API – Laravel on PHP 8.4 + Apache (for Render). composer.json pins config.platform.php to 8.4.1 so composer.lock never needs a newer PHP than this image.
+FROM php:8.4-apache
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git unzip libpq-dev libzip-dev libpng-dev libjpeg-dev libwebp-dev \
