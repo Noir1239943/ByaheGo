@@ -90,7 +90,6 @@ class User extends Authenticatable
     public function vehicles(): HasMany { return $this->hasMany(Vehicle::class, 'host_id'); }
     public function bookings(): HasMany { return $this->hasMany(Booking::class, 'renter_id'); }
     public function hostBookings(): HasMany { return $this->hasMany(Booking::class, 'host_id'); }
-    public function licenses(): HasMany { return $this->hasMany(DriverLicense::class); }
     public function latestLicense(): HasOne { return $this->hasOne(DriverLicense::class)->latestOfMany(); }
     public function hostApplication(): HasOne { return $this->hasOne(HostApplication::class)->latestOfMany(); }
     public function favorites(): HasMany { return $this->hasMany(Favorite::class); }

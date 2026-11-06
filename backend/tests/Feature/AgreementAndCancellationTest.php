@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\Booking;
-use App\Models\Notification;
 use App\Models\UserNotification;
 use App\Services\BookingService;
 use App\Support\Settings;

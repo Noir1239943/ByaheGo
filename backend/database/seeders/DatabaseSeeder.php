@@ -16,7 +16,6 @@ use App\Models\RecentlyViewed;
 use App\Models\Review;
 use App\Models\SocialAccount;
 use App\Models\SupportTicket;
-use App\Models\VerificationDecision;
 use App\Models\User;
 use App\Models\UserNotification;
 use App\Models\Vehicle;

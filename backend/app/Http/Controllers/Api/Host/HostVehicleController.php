@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\Host;
 
 use App\Http\Controllers\Controller;
 use App\Models\Hub;
-use App\Models\Media;
 use App\Models\Vehicle;
 use App\Models\VehicleBlockedDate;
 use App\Support\Notifier;

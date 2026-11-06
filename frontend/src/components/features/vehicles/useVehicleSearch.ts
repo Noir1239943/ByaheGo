@@ -3,10 +3,10 @@ import { useSearchParams } from 'react-router'
 import { localToIso } from '@/lib/format'
 import type { VehicleFilters } from '@/services/vehicles'
 
-export const FILTER_KEYS = ['type', 'transmission', 'fuel', 'seats', 'price_min', 'price_max', 'rental_type', 'instant_book', 'delivery', 'pet_friendly'] as const
+const FILTER_KEYS = ['type', 'transmission', 'fuel', 'seats', 'price_min', 'price_max', 'rental_type', 'instant_book', 'delivery', 'pet_friendly'] as const
 
 /** Where we are searching around. The sort 'nearest' only makes sense while these are set. */
-export const LOCATION_KEYS = ['lat', 'lng', 'radius', 'place'] as const
+const LOCATION_KEYS = ['lat', 'lng', 'radius', 'place'] as const
 
 /** Search + filter state lives in the URL so results are shareable and survive refresh. */
 export function useVehicleSearch() {

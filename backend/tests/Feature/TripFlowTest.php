@@ -7,10 +7,8 @@ use App\Models\Incident;
 use App\Models\InspectionPhoto;
 use App\Models\Invoice;
 use App\Models\Payment;
-use App\Models\User;
 use App\Models\UserNotification;
 use App\Services\PricingService;
-use Illuminate\Http\UploadedFile;
 use Tests\TestCase;
 
 /** Phase 5: guided photo check-in and check-out, host review, excess hours, extensions and the "car not returned" report. */

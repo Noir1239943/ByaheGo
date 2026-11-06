@@ -4,7 +4,7 @@ import { cn } from '@/lib/cn'
 
 type FieldShellProps = { label?: ReactNode; error?: string; hint?: ReactNode; id: string; className?: string; children: ReactNode; optional?: boolean }
 
-export function FieldShell({ label, error, hint, id, className, children, optional }: FieldShellProps) {
+function FieldShell({ label, error, hint, id, className, children, optional }: FieldShellProps) {
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
       {label && (

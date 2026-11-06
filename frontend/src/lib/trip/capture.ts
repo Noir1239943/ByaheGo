@@ -1,7 +1,7 @@
 /** Everything the guided camera does to a photo in the browser: shrink it, burn the date/time and booking reference into it, and read the GPS. */
 
-export const MAX_SIDE = 1600
-export const JPEG_QUALITY = 0.8
+const MAX_SIDE = 1600
+const JPEG_QUALITY = 0.8
 
 export type CaptureMeta = { live: boolean; device_time: string; lat: number | null; lng: number | null }
 

@@ -37,7 +37,7 @@ function PhotoDetails({ p }: { p: TripPhoto }) {
 }
 
 /** The photos of one check-in or check-out: readings, host response, and a grid you can tap to zoom. */
-export function InspectionPhotos({ inspection, title }: { inspection: TripInspection; title: string }) {
+function InspectionPhotos({ inspection, title }: { inspection: TripInspection; title: string }) {
   const [zoom, setZoom] = useState<TripPhoto | null>(null)
   const status = inspection.host_status ? HOST_STATUS[inspection.host_status] : null
   return (

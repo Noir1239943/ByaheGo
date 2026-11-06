@@ -1,5 +1,5 @@
 export type Role = 'renter' | 'host' | 'admin'
-export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'rejected'
+type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'rejected'
 export type VehicleType = 'sedan' | 'hatchback' | 'suv' | 'mpv' | 'van' | 'pickup' | 'motorcycle'
 export type PaymentMethod = 'gcash' | 'maya' | 'card' | 'qrph' | 'grabpay' | 'shopeepay'
 export type RentalType = 'self' | 'driver'
@@ -87,7 +87,7 @@ export interface VehicleCard {
   is_available?: boolean
 }
 
-export interface ProtectionPlan {
+interface ProtectionPlan {
   key: ProtectionKey
   name: string
   price_per_day: number
@@ -212,8 +212,8 @@ export interface Payment {
   user: UserBrief | null
 }
 
-export type BookingStatus = 'pending' | 'confirmed' | 'active' | 'completed' | 'cancelled'
-export type DisplayStatus = 'pending' | 'upcoming' | 'active' | 'completed' | 'cancelled' | 'under_review'
+type BookingStatus = 'pending' | 'confirmed' | 'active' | 'completed' | 'cancelled'
+type DisplayStatus = 'pending' | 'upcoming' | 'active' | 'completed' | 'cancelled' | 'under_review'
 
 export interface BookingRow {
   id: number
@@ -285,7 +285,7 @@ export interface TripInspection {
 }
 
 /** pending = the host decides; awaiting_payment = approved, the renter must pay before the original return time; approved = paid and applied; lapsed = not paid in time. */
-export interface TripExtension {
+interface TripExtension {
   id: number
   status: 'pending' | 'awaiting_payment' | 'approved' | 'declined' | 'lapsed'
   requested_return_at: string
@@ -403,9 +403,9 @@ export interface AuditLogEntry {
   created_at: string
 }
 
-export type CheckResult = 'pass' | 'warn' | 'fail' | 'not_checked'
+type CheckResult = 'pass' | 'warn' | 'fail' | 'not_checked'
 
-export interface AutoCheck {
+interface AutoCheck {
   key: string
   label: string
   result: CheckResult
@@ -423,7 +423,7 @@ export interface FaceBoxReport {
 }
 
 /** What the renter's browser reported about the photos. Not proof, only supports the admin's decision. */
-export interface ClientChecksReport {
+interface ClientChecksReport {
   face_similarity: number | null
   liveness: number | null
   antispoof: number | null
@@ -436,7 +436,7 @@ export interface ClientChecksReport {
 export type AutoLabel = 'reject' | 'incomplete' | 'check' | 'good'
 
 /** One audit-log entry: an automatic decision or a super-admin override. */
-export interface VerificationDecisionLog {
+interface VerificationDecisionLog {
   id: number
   event: 'auto_decision' | 'override'
   outcome: 'approve' | 'reject' | 'review'

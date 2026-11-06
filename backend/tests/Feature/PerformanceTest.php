@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Models\Favorite;
 use App\Models\Media;
 use App\Models\User;
-use App\Models\Vehicle;
 use App\Support\Settings;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;

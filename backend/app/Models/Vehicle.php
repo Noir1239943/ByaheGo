@@ -106,11 +106,6 @@ class Vehicle extends Model
             && ! $this->blockedDates()->where('starts_on', '<=', $to->toDateString())->where('ends_on', '>=', $from->toDateString())->exists();
     }
 
-    public function scopeOverlapping(Builder $q, $from, $to): Builder
-    {
-        return $q->whereHas('bookings', fn ($b) => $b->blocking()->where('pickup_at', '<', $to)->where('return_at', '>', $from));
-    }
-
     /** Own-location pins are rounded to ~1 km (0.01 degree) before anyone but the host and a confirmed renter sees them. */
     public const PUBLIC_PIN_DECIMALS = 2;
 

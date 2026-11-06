@@ -4,10 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\DriverLicense;
-use App\Models\Media;
 use App\Services\VerificationChecker;
 use App\Services\VerificationDecider;
-use App\Support\Notifier;
 use App\Support\Present;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;

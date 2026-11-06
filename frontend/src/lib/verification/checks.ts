@@ -14,7 +14,7 @@ export interface CheckInput {
   fullName: string
 }
 
-export const MSG = {
+const MSG = {
   noFace: "We couldn't find the photo on your license. Retake it in good light with the whole card visible.",
   manyFaces: 'We found more than one face on this photo. Retake it with only the front of your license in view.',
   fewKeywords: "This doesn't look like the front of a driver's license. Retake it flat on a table, in good light, with all the text readable.",

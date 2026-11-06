@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class AuthTest extends TestCase

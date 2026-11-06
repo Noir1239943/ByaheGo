@@ -13,7 +13,7 @@ import { useVehicleSearch } from './useVehicleSearch'
 const MapView = lazy(() => import('@/components/common/MapView'))
 
 /** How often the map re-asks the server. Near real-time without websockets (see the README on Laravel Reverb). */
-export const MAP_REFRESH_MS = 30_000
+const MAP_REFRESH_MS = 30_000
 
 /**
  * The map side of the List ⇄ Map toggle. It uses the exact same filters and dates as the list.

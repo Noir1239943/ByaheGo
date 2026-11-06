@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Booking;
 use App\Models\DriverLicense;
 use App\Models\HostApplication;
 use App\Models\AdminAuditLog;

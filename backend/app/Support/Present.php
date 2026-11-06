@@ -6,7 +6,6 @@ use App\Models\Booking;
 use App\Models\DriverLicense;
 use App\Models\HostApplication;
 use App\Models\Incident;
-use App\Models\Media;
 use App\Models\Payment;
 use App\Models\Review;
 use App\Models\User;

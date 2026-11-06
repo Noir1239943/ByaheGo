@@ -9,7 +9,7 @@ import { formatDateTime, peso } from '@/lib/format'
 import type { Payment } from '@/types'
 
 /** Where the invoice PDF of a payment lives for the person looking at it (renters and admins use different routes). */
-export const renterInvoicePath = (p: Payment) => `/payments/${p.id}/invoice.pdf`
+const renterInvoicePath = (p: Payment) => `/payments/${p.id}/invoice.pdf`
 export const adminInvoicePath = (p: Payment) => `/admin/payments/${p.id}/invoice.pdf`
 
 export function InvoiceLink({ p, path = renterInvoicePath }: { p: Payment; path?: (p: Payment) => string }) {

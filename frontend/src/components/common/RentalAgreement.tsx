@@ -1,6 +1,6 @@
 import { peso } from '@/lib/format'
 
-export const AGREEMENT_VERSION = '2026.3'
+const AGREEMENT_VERSION = '2026.3'
 
 const SECTIONS = (deposit?: number) => [
   {

@@ -13,7 +13,7 @@ export const CEBU_AREAS: Area[] = [
   { label: 'Naga City', lat: 10.2086, lng: 123.7584 },
 ]
 
-export const DEFAULT_CENTER: [number, number] = [10.3157, 123.8854]
+const DEFAULT_CENTER: [number, number] = [10.3157, 123.8854]
 
 export const areaCenter = (city: string): [number, number] => {
   const a = CEBU_AREAS.find((x) => x.label === city)
