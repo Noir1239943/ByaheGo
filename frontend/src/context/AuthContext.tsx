@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import axios from 'axios'
 import { toast } from 'sonner'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import { tokenStore } from '@/lib/api'
@@ -20,15 +21,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false)
       return
     }
-    try {
-      const data = await authService.me()
-      setUser(data.user)
-      setUnread(data.unread_notifications)
-    } catch {
-      setUser(null)
-    } finally {
-      setLoading(false)
+    // A slow or dropped connection is not a sign-out: only a refusal from the server (401/403, which also clears the
+    // token) ends the session. Otherwise the person stays signed in, and the first load tries once more.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const data = await authService.me()
+        setUser(data.user)
+        setUnread(data.unread_notifications)
+        break
+      } catch (e) {
+        const status = axios.isAxiosError(e) ? e.response?.status : undefined
+        if (status === 401 || status === 403) {
+          setUser(null)
+          break
+        }
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 1500))
+      }
     }
+    setLoading(false)
   }, [])
 
   useEffect(() => {
