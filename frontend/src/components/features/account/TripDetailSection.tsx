@@ -258,7 +258,7 @@ export function TripDetailSection() {
         </div>
       </Modal>
 
-      <Modal open={modal === 'report'} onClose={() => setModal(null)} title="Report a problem" description="For emergencies, call our 24/7 line: (032) 888 2924." footer={<Button loading={reportIt.isPending} disabled={report.description.trim().length < 10} onClick={() => reportIt.mutate()}>Send report</Button>}>
+      <Modal open={modal === 'report'} onClose={() => setModal(null)} title="Report a problem" description="Your host and our admins are alerted right away. If anyone is in danger, call 911 first." footer={<Button loading={reportIt.isPending} disabled={report.description.trim().length < 10} onClick={() => reportIt.mutate()}>Send report</Button>}>
         <div className="space-y-4">
           <Select label="What happened?" value={report.type} onChange={(e) => setReport({ ...report, type: e.target.value })} options={[{ value: 'breakdown', label: 'The vehicle broke down' }, { value: 'accident', label: 'I was in an accident' }, { value: 'damage', label: 'I found damage' }, { value: 'stolen', label: 'The car was stolen while I was renting' }, { value: 'other', label: 'Something else' }]} />
           <Textarea label="Tell us more" rows={4} value={report.description} onChange={(e) => setReport({ ...report, description: e.target.value })} placeholder="Where are you and what happened? Are you safe?" />

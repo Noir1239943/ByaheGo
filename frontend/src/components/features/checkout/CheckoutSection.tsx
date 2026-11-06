@@ -219,7 +219,7 @@ export function CheckoutSection() {
             {q && <div className="border-t border-line-100 bg-page/60 p-5"><PriceBreakdown q={q} /></div>}
           </Card>
           <p className="mt-3 flex items-start gap-2 rounded-2xl bg-brand-tint p-4 text-xs text-ink-700">
-            <ShieldCheck className="size-4 shrink-0 text-brand" /> Protection and 24/7 roadside help are included in every trip.
+            <ShieldCheck className="size-4 shrink-0 text-brand" /> Our damage policy is included in every trip: you pay at most the limit of your protection plan. It is not insurance.
           </p>
         </aside>
       </form>

@@ -83,7 +83,7 @@ class PaymentFlowTest extends TestCase
             $this->book($renter, $v, ['payment_method' => $method])->assertCreated();
             $this->assertSame([$channel], $this->xendit['calls'][$i++]['allowed_payment_channels'], $method);
         }
-        // Apple Pay and Google Pay are not Xendit channels in the Philippines, so they are not offered.
+        // Google Pay needs enabling on our Xendit account plus a Google merchant ID, and Apple Pay is not offered: neither is a checkout option.
         $this->book($renter, $this->vehicle(), ['payment_method' => 'apple_pay'])->assertStatus(422)->assertJsonValidationErrors('payment_method');
         $this->book($renter, $this->vehicle(), ['payment_method' => 'google_pay'])->assertStatus(422)->assertJsonValidationErrors('payment_method');
     }

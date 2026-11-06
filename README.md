@@ -34,12 +34,12 @@ You can also log in with the email (e.g. `test123@byahego.test`). Other seeded r
 | Nearest pick-up | **"Nearest to me"** sort uses the browser's location; distance is calculated on the server and shown on every card. "Show cars nearest to me" shortcut on the home search. |
 | Excess hours / penalty | **Late-return fee** counted from the server time the renter submits the return photos: each listing sets its grace period and hourly rate (default grace 30 min). Hours in the last partial day cost the hourly rate; from 5 hours it counts as one more full day (the daily rate). Capped per day. **Taken from the deposit first**; any extra is paid through Xendit with an invoice. Details in *The trip* below. |
 | Mobile-first – app or web app? | **Installable PWA** (manifest, service worker, offline app shell, update prompt, Install banner and an iPhone "Add to Home Screen" guide), checked at 360 px wide: no sideways scrolling, 44 px touch targets, sticky Book bar. See *Install as an app*. |
-| Payment gateway, online cash | Checkout runs on **Xendit** hosted checkout: **GCash, Maya, cards, QR Ph, GrabPay, ShopeePay**. See *Payments (Xendit)* below. Apple Pay and Google Pay are not offered (not available on Xendit's Philippine channels). |
+| Payment gateway, online cash | Checkout runs on **Xendit** hosted checkout: **GCash, Maya, cards, QR Ph, GrabPay, ShopeePay**. See *Payments (Xendit)* below. Xendit does support Google Pay in the Philippines, but it needs Google Pay enabled on our Xendit account and a Google merchant ID, so it is not enabled in our test setup and is not offered. Apple Pay is not offered. |
 | Live availability map – how is it real-time? | **Live map** (OpenStreetMap/Leaflet) with color-coded pins: available / on a trip now / booked for your dates. It **refreshes every 30 seconds while the tab is visible (the server keeps the answer for 15 s)** from the server, with a "Live · updated Xs ago" indicator. |
 | Filters on the server? | **Yes.** Type, price, seats, transmission, fuel, rental type (with driver), instant book, delivery, pet-friendly, location, text search and **date availability** are all filtered in the database. Filters live in the URL so results can be shared. |
 | Pagination – server or client? | **Server-side pagination** (Laravel `paginate`, 12 per page). The API returns one page + meta; the client renders numbered pages. |
 | OR / Invoice | Every successful payment gets a numbered **PDF invoice** (`BYG-YYYY-######`) and every refund a **refund receipt** (`BYG-RF-YYYY-######`), downloadable from the billing page and the trip. They are clearly labelled as not a BIR-registered official receipt. |
-| Contract – liable for damage? | **Rental agreement** must be accepted at checkout (version, date and IP are recorded). Liability is capped by the chosen **protection plan** (Standard ₱20,000 / Plus ₱8,000 / Premium ₱2,500). Hosts file **damage claims** at return; the deposit stays **on hold** until an admin approves, reduces or dismisses the claim. |
+| Contract – liable for damage? | **Rental agreement** must be accepted at checkout (version, date and IP are recorded). Liability for accidental damage is capped by the chosen **protection plan** (Standard ₱20,000 / Plus ₱8,000 / Premium ₱2,500). This is ByaheGo's own damage policy, **not insurance**, and the cap is enforced when an admin approves a claim; theft, missing parts and fines are not capped. Hosts file **damage claims** at return; the deposit stays **on hold** until an admin approves, reduces or dismisses the claim. |
 | How does a host register? | **Become a host application** (vehicles, city, payout account) → admin approval → host dashboard. Every new **vehicle listing** (photos + OR/CR) is reviewed by an admin before it goes live. |
 | Billing history | **Payments & billing** page: totals, deposits on hold, and every charge/refund/fee with receipt numbers. |
 | Car stolen? Parts stolen from the engine? | Theft, missing parts and tampering are **not covered** by protection plans (full liability, account suspended, reported to PNP). **Pick-up and return inspections** record odometer, fuel and a checklist that includes the **engine bay/battery** and tools. Hosts can report **theft/missing parts** incidents; admins resolve them and can suspend the renter. |
@@ -103,7 +103,7 @@ cp .env.example .env                    # VITE_API_URL=http://localhost:8000
 npm run dev                             # http://localhost:5173
 ```
 
-Tests: `cd backend && php artisan test` (149 feature tests, run on an in-memory SQLite database so they never touch Neon, with Xendit faked: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, the rental agreement, Xendit checkout, webhooks, refunds and invoices, 24-hour cancellation rule, guided check-in/out photos, excess hours, extensions, the "car not returned" report, the evidence packet, damage/theft disputes, suspensions, settings).
+Tests: `cd backend && php artisan test` (150 feature tests, run on an in-memory SQLite database so they never touch Neon, with Xendit faked: auth, social sign-in, password reset, account blocking, ID verification, host applications, server-side search, distance, privacy of pick-up pins, blocked dates, availability, the rental agreement, Xendit checkout, webhooks, refunds and invoices, 24-hour cancellation rule, guided check-in/out photos, excess hours, extensions, the "car not returned" report, the evidence packet, damage/theft disputes, suspensions, settings).
 
 ---
 
@@ -147,7 +147,7 @@ Tests: `cd backend && php artisan test` (149 feature tests, run on an in-memory 
 
 Checkout uses **Xendit's hosted payment page** (Payment Sessions). Card and wallet details are typed on Xendit's page and never reach our server.
 
-**Methods:** GCash, Maya, cards, QR Ph, GrabPay, ShopeePay (Xendit channel codes `GCASH`, `PAYMAYA`, `CARDS`, `QRPH`, `GRABPAY`, `SHOPEEPAY`). **Apple Pay and Google Pay are not offered**: Xendit's Philippine channels don't include them, and we don't fake them. If Xendit adds them, they are a one-line addition to `PaymentGateway::METHODS` / `CHANNELS`.
+**Methods:** GCash, Maya, cards, QR Ph, GrabPay, ShopeePay (Xendit channel codes `GCASH`, `PAYMAYA`, `CARDS`, `QRPH`, `GRABPAY`, `SHOPEEPAY`). **Google Pay and Apple Pay are not offered.** Xendit does support Google Pay in the Philippines, but it needs Google Pay enabled on our Xendit account and a Google merchant ID, so it is not enabled in our test setup (to add it later: enable it in the Xendit dashboard, add the merchant ID, then add one entry to `PaymentGateway::METHODS` / `CHANNELS`). Apple Pay is not offered. Neither is faked.
 
 **How a booking becomes paid**
 1. The renter signs the agreement and presses *Continue to payment*. The booking is saved as **pending** (dates held for `pending_booking_minutes`, default 30) and a Xendit session is opened for it.
@@ -240,7 +240,7 @@ Photos are compressed in the browser (max 1600 px, JPEG 82%), so one photo is ab
 | One listing (4 photos + OR + CR + CTPL) | 7–8 | ~3 MB |
 | One trip's pickup and return inspection (about 8 + 8 photos) | ~16 | ~6 MB |
 
-Neon's free plan stores 0.5 GB (about 500 MB). That is roughly 150 listings, or 400 ID checks, or 80 fully photographed trips, and a mix of them fills it sooner. Plan to move to a paid Neon plan, or to object storage for photos (S3, Cloudflare R2 or Supabase Storage, keeping only the URL in the database), before real traffic. The demo seed data alone uses a few tens of MB.
+Neon's free plan stores 1 GB per project. That is roughly 300 listings, or 800 ID checks, or 160 fully photographed trips, and a mix of them fills it sooner. Plan to move to a paid Neon plan, or to object storage for photos (S3, Cloudflare R2 or Supabase Storage, keeping only the URL in the database), before real traffic. The demo seed data alone uses a few tens of MB.
 
 ---
 
@@ -253,7 +253,7 @@ You can push this folder as **one GitHub repo** (Render uses `backend/`, Vercel 
 2. Copy the connection string (Dashboard → Connect), e.g.
    `postgresql://neondb_owner:xxxx@ep-xxxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require`
    **Turn "Connection pooling" off before copying**, so the host has no `-pooler` in it. Laravel's migrations fail through Neon's pooler (the first statement aborts the transaction). The direct connection is fine for this app's size.
-3. Photos are stored in the database as base64, so watch the storage meter (free plan: 0.5 GB). See "Database size" below.
+3. Photos are stored in the database as base64, so watch the storage meter (free plan: 1 GB per project). See "Database size" below.
 
 ### 2. API – Render
 1. New → **Web Service** → connect the repo → **Runtime: Docker**, **Root Directory: `backend`**, Instance type: Free.

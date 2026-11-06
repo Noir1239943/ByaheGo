@@ -38,7 +38,7 @@ export function TrustSafetySection() {
     { icon: BadgeCheck, t: 'Every driver is verified', s: 'License, selfie and automatic document checks, confirmed by our team before your first self-drive trip.' },
     { icon: FileCheck2, t: 'Every vehicle is reviewed', s: 'Hosts submit photos plus OR/CR. We approve listings before they go live.' },
     { icon: ClipboardCheck, t: 'Pick-up & return checks', s: 'Odometer, fuel, body, interior, engine bay and tools are recorded with photos – no surprise charges.' },
-    { icon: ShieldCheck, t: 'Protection on every trip', s: 'Choose Standard, Plus or Premium to cap what you pay if something happens.' },
+    { icon: ShieldCheck, t: 'Damage policy on every trip', s: 'Choose Standard, Plus or Premium to cap what you pay for accidental damage. It is ByaheGo\'s policy, not insurance.' },
     { icon: Wallet, t: 'Refundable deposit', s: 'Held during the trip, returned within 3 days. Late fees or approved damage are deducted transparently.' },
     { icon: HeartHandshake, t: 'Fair disputes', s: 'If a host reports damage, our team reviews evidence from both sides before any charge.' },
   ]
@@ -73,7 +73,7 @@ export function BecomeHostHeroSection() {
 export function HostBenefitsSection() {
   const items = [
     { icon: Wallet, t: 'Get paid fast', s: 'Earnings go to your GCash, Maya or bank 3 days after every trip. Keep 85% of the rental.' },
-    { icon: ShieldCheck, t: 'Host protection', s: 'Renters are verified, deposits are held, and we handle damage claims and disputes for you.' },
+    { icon: ShieldCheck, t: 'Host protection', s: 'Renters are verified, deposits are held, and we review damage claims and disputes. This is not an insurance policy.' },
     { icon: MapPinned, t: 'Use a ByaheGo hub', s: 'Hand over keys at a staffed hub with parking and CCTV, or meet renters near you.' },
     { icon: Sparkles, t: 'Tools that save time', s: 'Pick-up and return checklists, late-fee tracking, and an earnings dashboard.' },
   ]

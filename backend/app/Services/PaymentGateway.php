@@ -11,7 +11,8 @@ use Illuminate\Support\Facades\Log;
  * Xendit, using hosted checkout (Payment Sessions) and the v3 Refunds API. Card and wallet details are typed on
  * Xendit's own page and never touch this server. Amounts are whole pesos, which is also what Xendit expects for PHP.
  *
- * Apple Pay and Google Pay are not offered: Xendit's Philippine channels don't include them, and we don't fake them.
+ * Google Pay is not offered yet: Xendit supports it in the Philippines, but it needs Google Pay enabled on our Xendit account and a
+ * Google merchant ID, which our test setup doesn't have. Apple Pay is not offered. Neither is faked.
  */
 class PaymentGateway
 {

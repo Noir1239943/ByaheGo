@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Booking;
+use App\Models\Incident;
 use App\Models\Payment;
 use App\Models\Payout;
 use Tests\TestCase;
@@ -149,6 +150,39 @@ class BookingFlowTest extends TestCase
         $this->payBooking($u, $ref)->assertOk()->assertJsonPath('balance_due', 2000)->assertJsonPath('payment_status', 'balance_due');
         $this->xendit['session_status'] = 'COMPLETED';
         $this->payBooking($u, $ref)->assertOk()->assertJsonPath('balance_due', 0)->assertJsonPath('payment_status', 'paid');
+    }
+
+    /** The agreement promises the renter never pays more than the plan's limit for accidental damage, so the app must enforce it. */
+    public function test_accidental_damage_is_capped_by_the_protection_plan_but_theft_is_not(): void
+    {
+        $host = $this->host();
+        $u = $this->verifiedRenter();
+        $admin = $this->admin();
+        $n = 0;
+        $started = function (string $plan) use ($host, $u, &$n) {
+            $n++;
+            $res = $this->book($u, $this->vehicle(['plate_number' => 'CAP'.$n], $host), ['protection_plan' => $plan, 'pickup_at' => now()->addDays(10 * $n)->setTime(10, 0)->toIso8601String(), 'return_at' => now()->addDays(10 * $n + 2)->setTime(10, 0)->toIso8601String()]);
+            $ref = $res->assertCreated()->json('reference');
+            Booking::where('reference', $ref)->update(['pickup_at' => now()->subHour(), 'return_at' => now()->addDay()]);
+            $this->inspect($u, $ref, 'checkin')->assertCreated();
+            $this->as($host)->postJson("/api/host/bookings/{$ref}/pickup", ['odometer' => 100, 'fuel_level' => 100, 'checklist' => ['exterior' => true]])->assertOk();
+            return $ref;
+        };
+
+        // Premium plan: the most the renter pays for a dent is ₱2,500.
+        $ref = $started('premium');
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/incidents", ['type' => 'damage', 'description' => 'Dent on the rear door.', 'amount_claimed' => 9000])->assertCreated();
+        $id = $this->as($admin)->getJson('/api/admin/disputes')->json('data.0.id');
+        $this->as($admin)->postJson("/api/admin/disputes/{$id}/resolve", ['action' => 'charge', 'amount' => 9000, 'notes' => 'Photos confirm it'])
+            ->assertStatus(422)->assertJsonValidationErrors('amount')->assertJsonPath('errors.amount.0', fn ($m) => str_contains($m, '₱2,500'));
+        $this->assertSame('open', Incident::find($id)->status);
+        $this->as($admin)->postJson("/api/admin/disputes/{$id}/resolve", ['action' => 'charge', 'amount' => 2500, 'notes' => 'Capped by the plan'])->assertOk()->assertJsonPath('status', 'resolved');
+
+        // Missing parts are not accidental damage: the plan does not limit them.
+        $ref = $started('standard');
+        $this->as($host)->postJson("/api/host/bookings/{$ref}/incidents", ['type' => 'missing_parts', 'description' => 'The battery is gone.', 'amount_claimed' => 30000])->assertCreated();
+        $id = $this->as($admin)->getJson('/api/admin/disputes')->json('data.0.id');
+        $this->as($admin)->postJson("/api/admin/disputes/{$id}/resolve", ['action' => 'charge', 'amount' => 30000, 'notes' => 'Replacement cost'])->assertOk();
     }
 
     public function test_theft_report_lets_admin_suspend_renter(): void

@@ -27,7 +27,7 @@ export function ContactSection() {
           <h2 className="text-2xl font-extrabold tracking-tight">Still need help?</h2>
           <p className="text-ink-500">Our Cebu-based team replies within a few hours, every day.</p>
           {[
-            { icon: Siren, t: '24/7 roadside & emergencies', s: SUPPORT_PHONE, href: 'tel:+63328882924' },
+            { icon: Siren, t: 'Call us', s: SUPPORT_PHONE, href: 'tel:+63328882924' },
             { icon: Mail, t: 'Email us', s: SUPPORT_EMAIL, href: `mailto:${SUPPORT_EMAIL}` },
             { icon: Phone, t: 'Text or Viber', s: '0917 888 2924', href: 'sms:+639178882924' },
           ].map((c) => (

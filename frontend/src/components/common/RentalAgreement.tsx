@@ -43,7 +43,7 @@ const SECTIONS = (deposit?: number) => [
     title: '5. Damage and liability',
     body: [
       `A refundable security deposit${deposit ? ` (${peso(deposit)} for this vehicle)` : ''} is held during your trip and returned within 3 days of the return inspection.`,
-      'If the vehicle is accidentally damaged during your trip, you are liable for repair costs up to the limit of your protection plan: Standard ₱20,000, Plus ₱8,000, Premium ₱2,500.',
+      'If the vehicle is accidentally damaged during your trip, you are liable for repair costs up to the limit of your protection plan: Standard ₱20,000, Plus ₱8,000, Premium ₱2,500. This is ByaheGo\'s damage policy for renters, not an insurance policy.',
       'The host files a damage report with photos and an estimate. ByaheGo reviews every claim and can approve, reduce or dismiss it. Approved amounts are taken from your deposit first; any remaining balance is billed to you.',
     ],
   },

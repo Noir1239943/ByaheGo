@@ -24,7 +24,7 @@ export function HeroSection() {
             Cars, SUVs, vans and motorcycles from trusted local hosts. Compare prices, book in minutes, and pick up near you.
           </p>
           <ul className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-sm text-white/85">
-            {['Free cancellation up to a day before', 'Protection included', '24/7 roadside help'].map((t) => (
+            {['Free cancellation up to a day before', 'Damage policy included', 'Report problems in the app'].map((t) => (
               <li key={t} className="flex items-center gap-1.5">
                 <Check className="size-4 text-accent" strokeWidth={3} /> {t}
               </li>

@@ -116,7 +116,7 @@ class AgreementService
                 'If the host or ByaheGo cancels, you always get a full refund.',
             ]],
             ['title' => '7. Damage and liability', 'body' => [
-                "If the vehicle is damaged during your trip, you pay the assessed repair cost, up to the limit of your protection plan ({$plan['name']}: {$peso($plan['liability_cap'])}). The deposit is applied first, and any remainder is billed to you.",
+                "If the vehicle is damaged during your trip, you pay the assessed repair cost, up to the limit of your protection plan ({$plan['name']}: {$peso($plan['liability_cap'])}). The deposit is applied first, and any remainder is billed to you. This is ByaheGo's damage policy for renters; it is not an insurance policy, and it does not cover theft, loss, missing parts, fines or negligence (see section 8).",
                 'The host reports damage with photos and an estimate. ByaheGo reviews every claim and can approve, reduce or dismiss it. You are never charged for damage that is already recorded in the pick-up inspection.',
             ]],
             ['title' => '8. Loss, theft and missing parts', 'body' => [

@@ -23,7 +23,7 @@ export function SiteFooter() {
                 <Mail className="size-4 text-accent" /> {SUPPORT_EMAIL}
               </a>
               <a href="tel:+63328882924" className="flex items-center gap-2 hover:text-white">
-                <Phone className="size-4 text-accent" /> {SUPPORT_PHONE} · 24/7 roadside help
+                <Phone className="size-4 text-accent" /> {SUPPORT_PHONE}
               </a>
             </div>
           </div>

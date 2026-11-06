@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Models\Vehicle;
 use App\Support\Money;
 use App\Support\Notifier;
+use App\Support\Protection;
 use App\Support\Settings;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -411,13 +412,26 @@ class BookingService
         }
     }
 
+    /** Claim types that count as accidental damage and are limited by the renter's protection plan. */
+    public const CAPPED_INCIDENT_TYPES = ['damage', 'accident'];
+
     public function resolveIncident(Incident $incident, string $action, int $amount, ?string $notes, bool $suspendRenter, User $admin): Incident
     {
         if ($incident->status !== 'open') {
             throw ValidationException::withMessages(['incident' => 'This case has already been closed.']);
         }
-        return DB::transaction(function () use ($incident, $action, $amount, $notes, $suspendRenter, $admin) {
-            $booking = $incident->booking;
+        $booking = $incident->booking;
+        // The agreement promises that accidental damage costs the renter at most the limit of their protection plan. Theft,
+        // missing parts, fines and other claims are not covered by the plans and are not capped.
+        if ($action === 'charge' && in_array($incident->type, self::CAPPED_INCIDENT_TYPES, true)) {
+            $cap = (int) Protection::get($booking->protection_plan)['liability_cap'];
+            $already = (int) $booking->incidents()->where('status', 'resolved')->whereIn('type', self::CAPPED_INCIDENT_TYPES)->whereKeyNot($incident->id)->sum('amount_approved');
+            if ($amount > max(0, $cap - $already)) {
+                $left = Money::peso(max(0, $cap - $already));
+                throw ValidationException::withMessages(['amount' => "The renter's protection plan caps accidental damage at ".Money::peso($cap)." for this trip ({$left} left). Approve {$left} or less."]);
+            }
+        }
+        return DB::transaction(function () use ($incident, $action, $amount, $notes, $suspendRenter, $admin, $booking) {
             $incident->update([
                 'status' => $action === 'charge' ? 'resolved' : 'dismissed',
                 'amount_approved' => $action === 'charge' ? $amount : 0,

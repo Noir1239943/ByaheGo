@@ -468,9 +468,9 @@ export function AdminDisputesSection() {
         {active && (
           <div className="space-y-4">
             <Alert tone="info">
-              {['theft', 'missing_parts'].includes(active.type)
-                ? 'Theft and missing parts are not covered by protection – the renter is fully liable.'
-                : `Accidental damage is capped at ${peso(active.booking?.liability_cap ?? 0)} by the renter's ${capitalize(active.booking?.protection_plan)} plan.`}
+              {['damage', 'accident'].includes(active.type)
+                ? `Accidental damage is capped at ${peso(active.booking?.liability_cap ?? 0)} by the renter's ${capitalize(active.booking?.protection_plan)} plan (ByaheGo's damage policy, not insurance). Larger amounts are refused.`
+                : 'Theft, missing parts, fines and other claims are not limited by the protection plan.'}
               {' '}Approved amounts come out of the {peso(active.booking?.security_deposit ?? 0)} deposit first; the rest is billed to the renter.
             </Alert>
             <div className="grid grid-cols-2 gap-2">

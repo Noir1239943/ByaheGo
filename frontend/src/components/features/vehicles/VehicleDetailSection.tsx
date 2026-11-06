@@ -119,7 +119,7 @@ export function VehicleDetailSection() {
                     </li>
                   )
                 })}
-                <li className="flex items-center gap-3 text-sm text-ink-700"><ShieldCheck className="size-4.5 text-brand" /> Standard protection & 24/7 roadside help</li>
+                <li className="flex items-center gap-3 text-sm text-ink-700"><ShieldCheck className="size-4.5 text-brand" /> Damage policy included: your share is capped by your plan</li>
               </ul>
             </div>
           )}
