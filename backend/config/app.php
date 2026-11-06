@@ -61,6 +61,8 @@ return [
     // Demo data (see App\Support\DemoData). Off on a live site unless SEED_DEMO_DATA=true; the password comes from DEMO_PASSWORD only.
     'seed_demo_data' => filter_var(env('SEED_DEMO_DATA', false), FILTER_VALIDATE_BOOLEAN),
     'demo_password' => env('DEMO_PASSWORD'),
+    // On a live site demo trips (bookings, payments, reviews, disputes, audit entries) are only created with SEED_DEMO_TRIPS=true.
+    'seed_demo_trips' => filter_var(env('SEED_DEMO_TRIPS', false), FILTER_VALIDATE_BOOLEAN),
     // Optional real administrator for a live site that has no demo data: both values must be set in the host's environment.
     'admin_email' => env('ADMIN_EMAIL'),
     'admin_password' => env('ADMIN_PASSWORD'),

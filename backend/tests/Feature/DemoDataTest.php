@@ -2,8 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Models\AdminAuditLog;
 use App\Models\Booking;
+use App\Models\Incident;
+use App\Models\Payment;
+use App\Models\Review;
 use App\Models\User;
+use App\Models\UserNotification;
+use App\Models\Vehicle;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Support\Facades\Hash;
 use InvalidArgumentException;
@@ -15,7 +21,7 @@ class DemoDataTest extends TestCase
     protected function live(array $config = []): void
     {
         $this->app->detectEnvironment(fn () => 'production');
-        config($config + ['app.seed_demo_data' => false, 'app.demo_password' => null, 'app.admin_email' => null, 'app.admin_password' => null]);
+        config($config + ['app.seed_demo_data' => false, 'app.seed_demo_trips' => false, 'app.demo_password' => null, 'app.admin_email' => null, 'app.admin_password' => null]);
     }
 
     public function test_a_live_site_gets_no_demo_accounts_by_default(): void
@@ -80,6 +86,39 @@ class DemoDataTest extends TestCase
         $this->assertSame($bookings, Booking::count());
         $this->assertSame('Someone Else', $admin->fresh()->name);
         $this->assertTrue(Hash::check('changed-after-deploy-1', $admin->fresh()->password));
+    }
+
+    public function test_a_live_site_can_have_demo_accounts_and_cars_without_any_sample_trips(): void
+    {
+        $this->live(['app.seed_demo_data' => true, 'app.demo_password' => 'correct-horse-battery', 'app.admin_email' => 'owner@example.com', 'app.admin_password' => 'a-long-private-secret']);
+        app(DatabaseSeeder::class)->run();
+
+        $this->assertSame(0, Booking::count());
+        $this->assertSame(0, Payment::count());
+        $this->assertSame(0, Review::count());
+        $this->assertSame(0, Incident::count());
+        $this->assertSame(0, AdminAuditLog::count());
+        $this->assertGreaterThan(0, Vehicle::where('status', 'live')->count(), 'There are cars to browse.');
+        $this->assertSame(0.0, (float) Vehicle::max('rating_avg'), 'No invented ratings without reviews.');
+        $this->assertTrue(User::where('username', 'Admin')->exists());
+
+        // The real admin exists next to the demo accounts, with its own password.
+        $owner = User::where('email', 'owner@example.com')->first();
+        $this->assertSame('admin', $owner->role);
+        $this->assertTrue(Hash::check('a-long-private-secret', $owner->password));
+        $this->assertFalse(Hash::check('correct-horse-battery', $owner->password));
+        // And nobody can sign in with the old published password.
+        foreach (User::all() as $user) {
+            $this->assertFalse(Hash::check('Password123', $user->password), "{$user->username} still has the published password");
+        }
+        $this->postJson('/api/auth/login', ['login' => 'Admin', 'password' => 'correct-horse-battery'])->assertOk();
+    }
+
+    public function test_sample_trips_on_a_live_site_only_when_asked_for(): void
+    {
+        $this->live(['app.seed_demo_data' => true, 'app.seed_demo_trips' => true, 'app.demo_password' => 'correct-horse-battery']);
+        app(DatabaseSeeder::class)->run();
+        $this->assertGreaterThan(0, Booking::count());
     }
 
     public function test_local_demo_accounts_get_a_made_up_password_not_a_published_one(): void

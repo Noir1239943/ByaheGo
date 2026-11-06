@@ -21,6 +21,12 @@ class DemoData
         return ! app()->environment('production') || (bool) config('app.seed_demo_data');
     }
 
+    /** Sample trips (bookings, payments, reviews, disputes) come with local and test data; on a live site only when asked for. */
+    public static function withTrips(): bool
+    {
+        return ! app()->environment('production') || (bool) config('app.seed_demo_trips');
+    }
+
     /**
      * The password for every demo account. Returns [password, wasGenerated].
      *

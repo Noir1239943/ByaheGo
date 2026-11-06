@@ -24,7 +24,7 @@ The repository is public, so **no password is published here**. Ask the team for
 You can also log in with the email (e.g. `test123@byahego.test`). All demo accounts share one password.
 
 - **On your own computer** `php artisan migrate:fresh --seed` creates the demo data and **prints a made-up password** (or set `DEMO_PASSWORD` in `backend/.env` to choose it). Fix an already seeded database with `php artisan demo:set-password`.
-- **On a live site demo data is off.** Turn it on only for a presentation with `SEED_DEMO_DATA=true` and a `DEMO_PASSWORD` of 12+ characters in Render's environment (never in the repo). Seeding only fills a database that has no demo data yet and never resets anything.
+- **On a live site demo data is off.** Turn it on only for a presentation with `SEED_DEMO_DATA=true` and a `DEMO_PASSWORD` of 12+ characters in Render's environment (never in the repo). The accounts come with cars to browse but **no sample trips, payments or reviews** (`SEED_DEMO_TRIPS=true` adds them). Seeding only fills a database that has no demo data yet and never resets anything.
 
 **Test payments** run on Xendit's test mode (no real money). At checkout you are sent to Xendit's page: for GCash or Maya press **Proceed to Pay** on the test wallet page; for a card use `4000 0000 0000 1000` (expiry `12/30`, any CVC, any name). See *Payments (Xendit)* below.
 

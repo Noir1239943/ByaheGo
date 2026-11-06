@@ -48,8 +48,9 @@ class DatabaseSeeder extends Seeder
 
     public function run(): void
     {
+        $this->seedRealAdmin();
         if (! DemoData::allowed()) {
-            $this->seedAdminOnly();
+            $this->command?->info('Demo data is off (SEED_DEMO_DATA is not true).');
             return;
         }
         if (User::where('username', 'Admin')->exists()) {
@@ -64,10 +65,14 @@ class DatabaseSeeder extends Seeder
             $this->seedHubs();
             $vehicles = $this->seedVehicles();
             $this->seedLicenses();
-            $this->seedBookings($vehicles);
+            if (DemoData::withTrips()) {
+                $this->seedBookings($vehicles);
+            }
             $this->seedExtras($vehicles);
-            $this->seedAccountsAndAudit();
-            $this->seedAgreements();
+            if (DemoData::withTrips()) {
+                $this->seedAccountsAndAudit();
+                $this->seedAgreements();
+            }
         });
         Model::reguard();
         Settings::flush();
@@ -76,13 +81,12 @@ class DatabaseSeeder extends Seeder
         }
     }
 
-    /** A live site without demo data: creates one real admin from ADMIN_EMAIL and ADMIN_PASSWORD, if both are set and nobody has that email. */
-    protected function seedAdminOnly(): void
+    /** Creates one real admin from ADMIN_EMAIL and ADMIN_PASSWORD, if both are set and nobody has that email. Independent of demo data. */
+    protected function seedRealAdmin(): void
     {
         $email = strtolower(trim((string) config('app.admin_email')));
         $password = (string) config('app.admin_password');
         if ($email === '' || $password === '') {
-            $this->command?->info('Demo data is off (SEED_DEMO_DATA is not true). No accounts were created.');
             return;
         }
         DemoData::assertStrong($password, 'ADMIN_PASSWORD');
@@ -622,7 +626,7 @@ class DatabaseSeeder extends Seeder
             ['Your trip is booked!', 'Toyota Fortuner 2023 · pick-up in 6 days. We\'ll remind you the day before.', '/account/trips', 'success', 30],
             ['Price drop on a saved car', 'Mitsubishi Montero Sport 2022 is one of the best-rated SUVs this month.', '/account/saved', 'info', 6],
         ];
-        foreach ($notes as [$t, $b, $l, $k, $hoursAgo]) {
+        foreach (DemoData::withTrips() ? $notes : [] as [$t, $b, $l, $k, $hoursAgo]) {
             UserNotification::create(['user_id' => $test->id, 'title' => $t, 'body' => $b, 'link' => $l, 'kind' => $k,
                 'read_at' => $hoursAgo > 100 ? now() : null, 'created_at' => now()->subHours($hoursAgo)]);
         }
