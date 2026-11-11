@@ -21,7 +21,7 @@ export function Drawer({ open, onClose, title, children, side = 'left', classNam
   return createPortal(
     <div className="fixed inset-0 z-[1000]" role="dialog" aria-modal="true">
       <div className="absolute inset-0 animate-fade-in bg-ink-900/50" onClick={onClose} />
-      <div className={cn('absolute top-0 bottom-0 flex w-[86%] max-w-sm flex-col bg-white shadow-pop', side === 'left' ? 'left-0 animate-slide-in' : 'right-0 animate-fade-in', className)}>
+      <div className={cn('absolute top-0 bottom-0 flex w-[86%] max-w-sm flex-col bg-white shadow-pop', side === 'left' ? 'left-0 animate-slide-in' : 'right-0 animate-slide-in-right', className)}>
         <div className="flex items-center justify-between border-b border-line-100 px-5 py-4">
           <div className="text-base font-bold">{title}</div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-ink-500 hover:bg-line-100" aria-label="Close">

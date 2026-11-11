@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { AlertCircle, CalendarDays, Info, MapPin, ShieldCheck } from 'lucide-react'
+import { toast } from 'sonner'
 import { PriceBreakdown } from '@/components/common/PriceBreakdown'
-import { Alert, Button, Segmented, Skeleton } from '@/components/ui'
+import { Alert, Button, DateRangePicker, DateTrigger, Segmented, Skeleton, type DateTab } from '@/components/ui'
 import { useAuth } from '@/hooks/useAuth'
 import { useDebounce } from '@/hooks/useDebounce'
 import { getErrorMessage } from '@/lib/api'
@@ -22,6 +23,9 @@ export function BookingWidget({ vehicle: v }: { vehicle: VehicleDetail }) {
   const { user } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const pickupField = useRef<HTMLLabelElement>(null)
+  const returnField = useRef<HTMLLabelElement>(null)
+  const [dates, setDates] = useState<DateTab | null>(null)
 
   const body = useDebounce({ pickup, ret, type, plan }, 300)
   const valid = !!body.pickup && !!body.ret && new Date(body.ret) > new Date(body.pickup)
@@ -46,6 +50,7 @@ export function BookingWidget({ vehicle: v }: { vehicle: VehicleDetail }) {
   const checkoutUrl = `/checkout/${v.id}?${new URLSearchParams({ pickup, return: ret, type, plan }).toString()}`
 
   const reserve = () => {
+    if (new Date(pickup) < new Date()) return toast.error('That pick-up time has passed. Choose a later one.')
     if (!user) return navigate('/login', { state: { from: checkoutUrl } })
     if (needsVerification) return navigate('/verify', { state: { from: location.pathname + location.search } })
     navigate(checkoutUrl)
@@ -61,15 +66,27 @@ export function BookingWidget({ vehicle: v }: { vehicle: VehicleDetail }) {
 
       <div className="mt-4 overflow-hidden rounded-xl border border-line-200">
         <div className="grid divide-y divide-line-200 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-1 lg:divide-x-0 lg:divide-y xl:grid-cols-2 xl:divide-x xl:divide-y-0">
-          <label className="block p-3">
+          <label ref={pickupField} className={cn('block cursor-pointer p-3 transition hover:bg-page focus-within:bg-page', dates === 'pickup' && 'bg-page')}>
             <span className="flex items-center gap-1 text-[11px] font-semibold tracking-wide text-ink-500 uppercase"><CalendarDays className="size-3" /> Pick-up</span>
-            <input type="datetime-local" value={pickup} onChange={(e) => setPickup(e.target.value)} className="mt-0.5 w-full bg-transparent text-[13px] font-semibold outline-none" aria-label="Pick-up date and time" />
+            <DateTrigger tab="pickup" value={pickup} open={dates} onOpenChange={setDates} compact className="mt-0.5 w-full text-[13px] font-semibold outline-none" />
           </label>
-          <label className="block p-3">
+          <label ref={returnField} className={cn('block cursor-pointer p-3 transition hover:bg-page focus-within:bg-page', dates === 'return' && 'bg-page')}>
             <span className="flex items-center gap-1 text-[11px] font-semibold tracking-wide text-ink-500 uppercase"><CalendarDays className="size-3" /> Return</span>
-            <input type="datetime-local" value={ret} min={pickup} onChange={(e) => setRet(e.target.value)} className="mt-0.5 w-full bg-transparent text-[13px] font-semibold outline-none" aria-label="Return date and time" />
+            <DateTrigger tab="return" value={ret} open={dates} onOpenChange={setDates} compact className="mt-0.5 w-full text-[13px] font-semibold outline-none" />
           </label>
         </div>
+        <DateRangePicker
+          open={dates}
+          onOpenChange={setDates}
+          pickup={pickup}
+          ret={ret}
+          onChange={(next) => {
+            setPickup(next.pickup)
+            setRet(next.ret)
+          }}
+          booked={v.booked_ranges}
+          anchors={[pickupField, returnField]}
+        />
         <div className="border-t border-line-200 p-3">
           <span className="flex items-center gap-1 text-[11px] font-semibold tracking-wide text-ink-500 uppercase"><MapPin className="size-3" /> Pick-up location</span>
           <p className="mt-0.5 text-sm font-semibold">{v.pickup.label}</p>
@@ -108,7 +125,7 @@ export function BookingWidget({ vehicle: v }: { vehicle: VehicleDetail }) {
 
       <div className="mt-4">
         {!valid ? (
-          <Alert tone="warning">Your return time needs to be after pick-up.</Alert>
+          <Alert tone="warning">{!pickup || !ret ? 'Choose your pick-up and return dates.' : 'Your return time needs to be after pick-up.'}</Alert>
         ) : quote.isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-4" />

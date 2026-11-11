@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { LocateFixed, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Checkbox, Chip, Input, Segmented, Select } from '@/components/ui'
@@ -59,6 +59,20 @@ export function FiltersPanel({ facets }: { facets?: Record<string, number> }) {
     if (dMin !== get('price_min') || dMax !== get('price_max')) set({ price_min: dMin, price_max: dMax })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dMin, dMax])
+
+  // The panel sits in a drawer that unmounts when it closes. If a price was typed in the
+  // last half second (still waiting on the debounce), apply it instead of dropping it.
+  const latest = useRef({ min, max, dMin, dMax, set })
+  useEffect(() => {
+    latest.current = { min, max, dMin, dMax, set }
+  })
+  useEffect(
+    () => () => {
+      const l = latest.current
+      if (l.min !== l.dMin || l.max !== l.dMax) l.set({ price_min: l.min, price_max: l.max })
+    },
+    [],
+  )
 
   const toggleType = (t: string) => {
     const next = types.includes(t) ? types.filter((x) => x !== t) : [...types, t]

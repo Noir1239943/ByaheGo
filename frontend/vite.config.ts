@@ -12,7 +12,7 @@ const https = existsSync(`${certDir}/localhost.pem`) ? { key: readFileSync(`${ce
 
 /**
  * The website's Content-Security-Policy, written into index.html when building (the dev server needs inline scripts for hot reload, so
- * it has none). It only lets the page talk to itself, our API, OpenStreetMap (map tiles and address search) and Google Fonts, and it
+ * it has none). It only lets the page talk to itself, our API, OpenStreetMap (map tiles and address search, plus Photon's place search) and Google Fonts, and it
  * allows WebAssembly and web workers for the face check and OCR. Frame, form and object rules that a <meta> tag can't carry are in
  * vercel.json. Set VITE_API_URL at build time so the API's address is included.
  */
@@ -25,7 +25,8 @@ function contentSecurityPolicy(apiUrl: string): Plugin {
     "font-src 'self' data: https://fonts.gstatic.com",
     `img-src 'self' data: blob: https://*.tile.openstreetmap.org ${api}`,
     // data: and blob: are the app's own in-browser images (photos are resized and read back from memory); they can't reach any server.
-    `connect-src 'self' data: blob: ${api} https://nominatim.openstreetmap.org`,
+    // Photon: place search as you type in the pick-up location box (Nominatim doesn't allow that use).
+    `connect-src 'self' data: blob: ${api} https://nominatim.openstreetmap.org https://photon.komoot.io`,
     "worker-src 'self' blob:",
     "media-src 'self' blob:",
     "manifest-src 'self'",
