@@ -143,6 +143,66 @@ class SocialAndPasswordAuthTest extends TestCase
             ->assertJsonPath('code', 'account_blocked')->assertJsonPath('block.reason', 'Fraud')->assertJsonPath('block.type', 'revoked');
     }
 
+    public function test_both_buttons_show_when_both_providers_have_keys(): void
+    {
+        $this->configureProviders();
+        $this->getJson('/api/auth/config')->assertJson(['google_enabled' => true, 'facebook_enabled' => true]);
+        $this->fakeProviderUser('g-1', 'a@b.test', 'A');
+        $this->get('/api/auth/google/redirect')->assertRedirectContains('https://provider.test/auth?state=');
+        $this->get('/api/auth/facebook/redirect')->assertRedirectContains('https://provider.test/auth?state=');
+    }
+
+    public function test_cancelling_at_google_or_facebook_shows_a_clear_message(): void
+    {
+        $this->configureProviders();
+        $this->fakeProviderUser('g-1', 'a@b.test', 'A', ['email_verified' => true]);
+        // What Google and Facebook send back when the person presses Cancel.
+        $this->get('/api/auth/google/callback?error=access_denied&state='.$this->startFlow('google'))
+            ->assertRedirect('https://app.test/auth/callback?error=cancelled');
+        $this->get('/api/auth/facebook/callback?error=access_denied&error_code=200&error_reason=user_denied&state='.$this->startFlow('facebook'))
+            ->assertRedirect('https://app.test/auth/callback?error=cancelled');
+        // Any other error from the provider is not the person's doing.
+        $this->get('/api/auth/facebook/callback?error=server_error&state='.$this->startFlow('facebook'))
+            ->assertRedirect('https://app.test/auth/callback?error=provider_error');
+        $this->assertDatabaseCount('users', 0);
+        $this->assertDatabaseCount('social_accounts', 0);
+    }
+
+    public function test_a_failed_token_exchange_with_the_provider_is_reported(): void
+    {
+        $this->configureProviders();
+        $this->fakeProviderUser('g-1', 'a@b.test', 'A');
+        $state = $this->startFlow('google');
+        Socialite::swap(new class {
+            public function driver()
+            {
+                return new class {
+                    public function stateless() { return $this; }
+
+                    public function user() { throw new \RuntimeException('invalid_grant'); }
+                };
+            }
+        });
+        $this->get('/api/auth/google/callback?code=expired&state='.$state)->assertRedirect('https://app.test/auth/callback?error=provider_error');
+        $this->assertDatabaseCount('users', 0);
+    }
+
+    public function test_facebook_signs_in_to_the_existing_account_with_the_same_email(): void
+    {
+        $this->configureProviders();
+        $existing = $this->makeUser(['email' => 'ana.reyes@example.test']);
+        $this->fakeProviderUser('fb-7', 'Ana.Reyes@Example.test', 'Ana Reyes');
+        $res = $this->get('/api/auth/facebook/callback?code=ok&state='.$this->startFlow('facebook'))->assertRedirectContains('code=');
+        $this->postJson('/api/auth/social/exchange', ['code' => $this->codeFrom($res)])->assertOk()
+            ->assertJsonPath('user.id', $existing->id)->assertJsonPath('user.facebook_linked', true)->assertJsonPath('user.google_linked', false);
+        $this->assertDatabaseCount('users', 1); // no duplicate account
+
+        // Next time the same Facebook account comes straight back to it.
+        $res = $this->get('/api/auth/facebook/callback?code=ok&state='.$this->startFlow('facebook'))->assertRedirectContains('code=');
+        $this->postJson('/api/auth/social/exchange', ['code' => $this->codeFrom($res)])->assertOk()->assertJsonPath('user.id', $existing->id);
+        $this->assertDatabaseCount('social_accounts', 1);
+    }
+
     public function test_login_is_limited_to_five_attempts_a_minute(): void
     {
         RateLimiter::clear('x');

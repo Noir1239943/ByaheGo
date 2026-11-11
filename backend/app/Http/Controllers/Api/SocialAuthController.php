@@ -53,7 +53,8 @@ class SocialAuthController extends Controller
     public function callback(Request $request, string $provider)
     {
         if (! self::enabled($provider)) return $this->failed('not_configured');
-        if ($request->filled('error')) return $this->failed('cancelled');
+        // Google and Facebook both answer "access_denied" when the person presses Cancel; anything else is a provider problem.
+        if ($request->filled('error')) return $this->failed($request->input('error') === 'access_denied' ? 'cancelled' : 'provider_error');
         $state = (string) $request->input('state');
         if ($state === '' || Cache::pull("oauth_state:{$state}") !== $provider) return $this->failed('invalid_state');
 

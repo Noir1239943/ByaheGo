@@ -27,6 +27,11 @@
         <env name="FRONTEND_URL" value="http://localhost:5173"/>
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="DB_URL" value=""/>
+        <!-- Never use real Google / Facebook keys from .env in tests; tests that need them set fake ones. -->
+        <env name="GOOGLE_CLIENT_ID" value=""/>
+        <env name="GOOGLE_CLIENT_SECRET" value=""/>
+        <env name="FACEBOOK_CLIENT_ID" value=""/>
+        <env name="FACEBOOK_CLIENT_SECRET" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

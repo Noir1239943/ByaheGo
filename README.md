@@ -310,11 +310,43 @@ Alternatively use **New → Blueprint** with the included `render.yaml`.
 4. Put the Vercel URL into Render's `CORS_ALLOWED_ORIGINS` and redeploy the API.
 
 ### Social sign-in setup (optional)
-**Google:** console.cloud.google.com → APIs & Services → Credentials → Create credentials → OAuth client ID → *Web application*. Under **Authorized redirect URIs** add `<APP_URL>/api/auth/google/callback` (and `http://localhost:8000/api/auth/google/callback` for local). Put the Client ID and Client secret in `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+"Continue with Google" and "Continue with Facebook" are already built. **Each button stays hidden until the API has that provider's two keys**, so the login page never shows a broken button. You can set up just one of them.
 
-**Facebook:** developers.facebook.com → Create app (Consumer) → add **Facebook Login** → Settings: **Valid OAuth Redirect URIs** = `<APP_URL>/api/auth/facebook/callback`. Basic settings: set your **Privacy Policy URL** (`<FRONTEND_URL>/privacy`) and **Terms** URL (`<FRONTEND_URL>/terms`). Put the App ID and App Secret in `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET`. Switch the app to *Live* when ready.
+How it works: the button opens `<APP_URL>/api/auth/{google|facebook}/redirect` on the API, the provider sends the person back to `<APP_URL>/api/auth/{google|facebook}/callback`, and the API then sends them to `<FRONTEND_URL>/auth/callback` with a one-time code that the website swaps for its normal sign-in token. No change is needed on Vercel.
 
-Set `FRONTEND_URL` to the website so the API can send people back. Password reset emails go through the configured mailer (`MAIL_MAILER=log` writes them to `storage/logs` locally).
+The callback addresses to register (they must match exactly):
+
+| | Local | Live |
+|---|---|---|
+| Google | `http://localhost:8000/api/auth/google/callback` | `https://byahego-api.onrender.com/api/auth/google/callback` |
+| Facebook | `http://localhost:8000/api/auth/facebook/callback` (allowed automatically while the app is in Development mode) | `https://byahego-api.onrender.com/api/auth/facebook/callback` |
+
+**Google** (console.cloud.google.com, signed in with your Google account):
+1. Create a project (top bar → project picker → *New project*), e.g. "ByaheGo".
+2. Open **Google Auth Platform** (search for it in the top search bar) → *Get started*. App name `ByaheGo`, your email as support email, Audience **External**, your email as contact → *Create*.
+3. **Clients** → *Create client* → Application type **Web application**, name "ByaheGo website". Under **Authorized redirect URIs** add both Google addresses from the table above. Leave *Authorized JavaScript origins* empty. → *Create*.
+4. Copy the **Client ID** and **Client secret** straight away (download the JSON too). Google shows the secret only once; if you lose it, add a new secret on the client.
+5. **Audience**: while the app says *Testing*, only the Gmail addresses you add under *Test users* can sign in. Click **Publish app** to let anyone sign in (ByaheGo only asks for name and email).
+
+**Facebook** (developers.facebook.com, signed in with your Facebook account):
+1. *My Apps* → **Create app**. Name `ByaheGo`, your contact email → use case **Authenticate and request data from users with Facebook Login** → no business portfolio for now → *Create app*.
+2. **Use cases** → Facebook Login → *Customize*. Under *Permissions*, make sure **email** is added (public_profile is there already). Under *Settings*, put the live Facebook address from the table in **Valid OAuth Redirect URIs** → *Save changes*.
+3. **App settings → Basic**: copy the **App ID** and **App secret** (click *Show*). Fill in Privacy Policy URL `https://byahego.vercel.app/privacy`, Terms of Service URL `https://byahego.vercel.app/terms`, User data deletion (instructions URL) `https://byahego.vercel.app/privacy`, a category and a 1024×1024 app icon → *Save changes*.
+4. While the app is in **Development** mode, only you and people you add under *App roles → Roles* can sign in with Facebook. **Publish** the app when everyone should be able to.
+
+**Where the keys go** (never in the repo or in chat):
+
+| Key | Google value | Facebook value |
+|---|---|---|
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Client ID / Client secret | |
+| `FACEBOOK_CLIENT_ID` / `FACEBOOK_CLIENT_SECRET` | | App ID / App secret |
+
+- **Local:** add them to `backend/.env`, then stop the API (Ctrl+C) and start it again. The button appears after a page refresh.
+- **Live:** Render → the `byahego-api` service → **Environment** → add the same keys → *Save, rebuild and deploy*. Check that Render's `APP_URL` is `https://byahego-api.onrender.com` and `FRONTEND_URL` is `https://byahego.vercel.app` (no trailing slash).
+
+Accounts are matched by email: signing in with Google or Facebook using the email of an existing ByaheGo account opens that account (only when the provider confirms the email). If Facebook doesn't share an email, the person is asked to type one. Suspended or blocked accounts can't get in this way either.
+
+Password reset emails go through the configured mailer (`MAIL_MAILER=log` writes them to `storage/logs` locally).
 
 ---
 

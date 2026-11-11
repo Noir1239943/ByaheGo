@@ -168,6 +168,7 @@ export function TermsSection() {
 export function PrivacySection() {
   const items = [
     ['What we collect', 'Your name, contact details, driver\'s license and selfie (for verification), trip details, and payment references. We never store your full card number or e-wallet PIN.'],
+    ['Signing in with Google or Facebook', 'If you choose "Continue with Google" or "Continue with Facebook", we only receive your name, email address and an account ID from them. We never see your Google or Facebook password and never post anything for you. To have this data deleted, see "Your rights" below.'],
     ['Why we collect it', 'To verify drivers, process bookings and refunds, keep trips safe, resolve disputes and meet legal requirements such as the Data Privacy Act of 2012 (RA 10173).'],
     ['Who can see your documents', 'Only ByaheGo\'s verification team. Hosts see your name, phone number and verified status – never your license photos.'],
     ['How long we keep it', 'Trip and payment records are kept for 10 years for tax purposes. Verification documents are deleted 2 years after your last trip, or sooner if you close your account.'],

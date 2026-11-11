@@ -15,7 +15,7 @@ const ERRORS: Record<string, string> = {
   invalid_state: 'That sign-in attempt expired or looked unsafe. Please try again.',
   provider_error: "We couldn't reach the sign-in provider. Please try again in a moment.",
   not_configured: "That sign-in option isn't set up yet. Please use your username and password.",
-  email_in_use: 'An account with that email already exists. Log in with your password, then connect it from your account settings.',
+  email_in_use: "An account with that email already exists, and the provider hasn't confirmed the address is yours. Log in with your username and password instead.",
 }
 
 /** Where Google / Facebook sign-in lands. Trades the one-time code for our token, so a token never appears in a URL. */
