@@ -58,7 +58,7 @@ export function RegisterSection() {
           label={<>I agree to the <Link to="/terms" target="_blank" className="text-brand underline">Terms & Rental Agreement</Link> and <Link to="/privacy" target="_blank" className="text-brand underline">Privacy Policy</Link></>}
         />
         <div className="sm:col-span-2">
-          <PillSubmit loading={busy}>Sign Up Now</PillSubmit>
+          <PillSubmit loading={busy} className='w-full cursor-pointer'>Sign Up Now</PillSubmit>
         </div>
       </form>
       <SocialButtons action="Sign up" />

@@ -35,7 +35,7 @@ export function PillSubmit({ className, ...rest }: Omit<ButtonProps, 'type'>) {
         size="lg"
         className={cn(
           'h-12 min-w-44 rounded-full bg-linear-to-r from-brand to-[#1AA88F] px-10 text-white transition-all',
-          'shadow-[0_12px_24px_-10px_rgb(13_124_107/0.8)] hover:-translate-y-px hover:from-brand-dark hover:to-brand hover:shadow-[0_16px_28px_-10px_rgb(13_124_107/0.9)]',
+          'shadow-[0_12px_24px_-10px_rgb(13_124_107/0.2)] hover:-translate-y-px hover:from-brand-dark hover:to-brand hover:shadow-[0_16px_28px_-10px_rgb(13_124_107/0.3)]',
           className,
         )}
         {...rest}

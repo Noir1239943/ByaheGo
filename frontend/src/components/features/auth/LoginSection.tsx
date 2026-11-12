@@ -94,7 +94,7 @@ export function LoginSection() {
         <div className="-mt-2 text-right">
           <Link to="/forgot-password" className="inline-flex min-h-11 items-center text-sm font-semibold text-brand hover:underline">Forgot password?</Link>
         </div>
-        <PillSubmit loading={busy}>Login Now</PillSubmit>
+        <PillSubmit loading={busy} className="w-full cursor-pointer">Login Now</PillSubmit>
       </form>
       <SocialButtons action="Login" />
       <p className="mt-7 text-center text-sm text-ink-500">
